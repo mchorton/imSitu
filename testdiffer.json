@@ -1,0 +1,1 @@
+{"img1.png": {"frames": [{"place": "p1", "agent": "a1"}, {"place": "p1", "agent": "a1"}], "verb": "verb11"}, "img2.png": {"frames": [{"place": "p1", "agent": "a2"}, {"place": "p2", "agent": "a1"}], "verb": "verb11"}, "img3.png": {"frames": [{"place": "p1", "agent": "_??"}], "verb": "verb11"}, "img4.png": {"frames": [{"place": "p2", "agent": "a1"}], "verb": "verb11"}}

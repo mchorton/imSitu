@@ -15,6 +15,7 @@ class ImgDep():
     self.name = name
     # Map from verb-role to set of image names.
     self.deps = {} # TODO add_deps function?
+    self.role2Nouns = {}
   def __str__(self):
     return "(%s, %s)" % (str(self.name), str(self.deps))
   def __repr__(self):
@@ -30,6 +31,15 @@ class ImgDep():
     """
     return len(self.minNeededForZS(trainImgDeps)) == 0
 
+  @property
+  def verb(self):
+    """
+    Get the name of the verb represented in this image.
+    """
+    for k in self.deps:
+      return k[0]
+    return None
+
   def minNeededForZS(self, trainImgDeps):
     """ Get a list of how many movements are needed for 0-shot. """
     minset = set()
@@ -43,6 +53,14 @@ class ImgDep():
         minlen = len(curset)
     return minset
 
+  def numDifferentLabelings(self, otherImgDep):
+    if self.verb is None or self.verb != otherImgDep.verb:
+      return None
+    numDifferences = 0
+    for k,v in self.role2Nouns.iteritems():
+      if len(otherImgDep.role2Nouns[k] & v) == 0:
+        numDifferences += 1
+    return numDifferences
 
 def getvrn2Imgs(dataset):
   """
@@ -63,13 +81,22 @@ def getImageDeps(vrn2Imgs):
   Gets the ImgDep objects from a vrn2Imgs
   """
   imgdeps = {} # map from image name to ImgDep objects
-  for vrn, imgs in vrn2Imgs.iteritems():
+  for vrn, imgs in vrn2Imgs.iteritems(): # TODO does this properly handle empty sets?
     for img in imgs:
       if img not in imgdeps:
         imgdeps[img] = ImgDep(img)
       vr = vrn[:2]
       imgdeps[img].deps[vr] = imgdeps[img].deps.get(vr, set()) | imgs
+      imgdeps[img].role2Nouns[vr] = imgdeps[img].role2Nouns.get(vr, set()) | set([vrn[2]])
   return imgdeps
+
+def get_joint_set(datasets):
+  if  isinstance(datasets, str):
+    datasets = [datasets]
+  train = {}
+  for dataset in datasets:
+    train.update(json.load(open(dataset)))
+  return train
 
 def get_split(datasets, devsize):
   """ 
@@ -77,11 +104,7 @@ def get_split(datasets, devsize):
   @param datasets a list of datasets from which data will be merged, or a single filename
   @param devsize the % of data to put in the dev set
   """
-  if  isinstance(datasets, str):
-    datasets = [datasets]
-  train = {}
-  for dataset in datasets:
-    train.update(json.load(open(dataset)))
+  train = get_joint_set(datasets)
   vrn2Imgs = getvrn2Imgs(train)
 
   # get image dependencies.
@@ -115,6 +138,77 @@ def get_split(datasets, devsize):
       movethresh += 1
 
   return trainDeps, devDeps, imgdeps
+
+def get_split_2(datasets, devsize):
+  """ 
+  Gets the desired splits of the data.
+  @param datasets a list of datasets from which data will be merged, or a single filename
+  @param devsize the % of data to put in the dev set
+  """
+  train = get_joint_set(datasets)
+  vrn2Imgs = getvrn2Imgs(train)
+
+  # get image dependencies.
+  imgdeps = getImageDeps(vrn2Imgs)
+
+  # Now, loop over the imgdeps, slowly adding things to set 'dev'
+  # TODO could just be a keyset
+  #trainDeps = copy.deepcopy(imgdeps) # Can just copy references. oh well. TODO
+  trainDeps = set([k for k in imgdeps])
+  devDeps = set()
+
+  nDev = len(trainDeps) * devsize
+
+  movethresh = 1
+  cont = True
+  while cont:
+    print "train,dev,movethresh = %d,%d,%d" % (len(trainDeps), len(devDeps),movethresh)
+    anyMoved = False
+    for name,deps in imgdeps.iteritems():
+      considerMoving = deps.minNeededForZS(trainDeps)
+      #print "For image %s: considered moving %s" % (name, str(considerMoving))
+      if len(considerMoving) <= movethresh and len(considerMoving) > 0:
+        # Move all from train to dev
+        trainDeps -= considerMoving
+        devDeps |= considerMoving
+        anyMoved = True
+        if len(devDeps) > nDev:
+          cont = False
+          break
+    if not anyMoved:
+      movethresh += 1
+
+  return trainDeps, devDeps, imgdeps
+
+def getDifferers(datasets):
+  """
+  Determines how many verb-roles differ between each pair of images that
+  share a verb class.
+  """
+  #data = get_joint_set(["train.json", "dev.json"])
+  data = get_joint_set(datasets)
+  #data = get_joint_set(["testfunc.json"])
+  vrn2Imgs = getvrn2Imgs(data)
+  imgdeps = getImageDeps(vrn2Imgs)
+
+  differCounts = collections.defaultdict(int)
+
+  verbsets = collections.defaultdict(list)
+  for name,imgdep in imgdeps.iteritems():
+    verbsets[imgdep.verb].append(name)
+  classnum = 0
+  totclasses = len(verbsets)
+  for verb, names in verbsets.iteritems():
+    classnum += 1
+    print "===> Considering Verb Class %d of %d" % (classnum, totclasses)
+    for i in range(len(names)):
+      for j in range(i):
+        img1 = imgdeps[names[i]]
+        img2 = imgdeps[names[j]]
+        ndiff = img1.numDifferentLabelings(img2)
+        differCounts[ndiff] += 1
+  print str(differCounts)
+  return differCounts
 
 def main():
   trainDeps, devDeps, imgdeps = get_split(["train.json", "dev.json"], 0.3)

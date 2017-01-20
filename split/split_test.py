@@ -1,6 +1,7 @@
 import unittest
 import json
 import split as sp
+import collections
 
 class TestSplit(unittest.TestCase):
   @classmethod
@@ -22,20 +23,20 @@ class TestSplit(unittest.TestCase):
     self.assertEqual(obs, expected)
 
   def test_get_split(self):
-    train, dev = sp.get_split(self.datafile, 0.)
+    train, dev, _ = sp.get_split(self.datafile, 0.)
     self.assertEqual(len(dev), 1)
 
 
-    train, dev = sp.get_split(self.datafile, .2)
+    train, dev, _ = sp.get_split(self.datafile, .2)
     self.assertEqual(len(dev), 2)
 
-    train, dev = sp.get_split(self.datafile, .4)
+    train, dev, _ = sp.get_split(self.datafile, .4)
     self.assertEqual(len(dev), 3)
 
-    train, dev = sp.get_split(self.datafile, .6)
+    train, dev, _ = sp.get_split(self.datafile, .6)
     self.assertEqual(len(dev), 4)
 
-    train, dev = sp.get_split(self.datafile, .8) # Last 2 will be moved together.
+    train, dev, _ = sp.get_split(self.datafile, .8) # Last 2 will be moved together.
     self.assertEqual(len(dev), 6)
 
   def test_minNeededForZS(self):
@@ -59,3 +60,28 @@ class TestSplit(unittest.TestCase):
     observed = img3deps.minNeededForZS(deps)
     expected = set(["img3.jpg"])
     self.assertEqual(observed, expected)
+
+  def test_numDifferentLabelings(self):
+    self.datafile = "testdiffer.json"
+    counts = sp.getDifferers(self.datafile)
+    expected = collections.defaultdict(int)
+    expected[0] = 2
+    expected[1] = 3
+    expected[2] = 1
+    self.assertEqual(counts, expected)
+
+    self.datafile = "testfunc.json"
+    counts = sp.getDifferers(self.datafile)
+    expected[0] = 1
+    expected[1] = 2
+    expected[2] = 1
+    self.assertEqual(counts, expected)
+
+    self.datafile = ["testdiffer.json", "testfunc.json"]
+    counts = sp.getDifferers(self.datafile)
+    expected[0] = 3
+    expected[1] = 5
+    expected[2] = 2
+    self.assertEqual(counts, expected)
+    #self.assertEqual(True, False)
+
