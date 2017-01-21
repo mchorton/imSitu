@@ -7,6 +7,7 @@
 import json
 import copy
 import collections
+import random
 
 MAXTHRESH=10
 
@@ -139,13 +140,40 @@ def get_split(datasets, devsize):
 
   return trainDeps, devDeps, imgdeps
 
-def get_split_2(datasets, devsize):
+# TODO I should just modify the other one, to do what I expect...?
+#  for img in devDeps:
+#    if imgdeps[img].isZS(trainDeps):
+#      nZero += 1
+# It was a list, REKT!
+def countZS(desiredSet, trainDeps, imgdeps):
+  count = 0
+  nZero = 0
+  for img in desiredSet:
+    count += 1
+    if imgdeps[img].isZS(trainDeps):
+      nZero += 1
+  # TODO this is really slow! Why?
+  return nZero
+  #return len([img for img in desiredSet if imgdeps[img].isZS(trainDeps)])
+
+def get_split_2(train, desiredZS=12000, ranDevSize=12000):
   """ 
   Gets the desired splits of the data.
-  @param datasets a list of datasets from which data will be merged, or a single filename
+  @param train the original training data, as a dictionary
   @param devsize the % of data to put in the dev set
   """
-  train = get_joint_set(datasets)
+  # copy the train data; we intend to mangle it.
+  cp = copy.deepcopy(train)
+  train = cp
+
+  ret = {}
+
+  # Remove some data at random.
+  ranDev = random.sample(train.keys(), ranDevSize)
+  for key in ranDev:
+    train.pop(key)
+  ret["zsranDev"] = ranDev
+
   vrn2Imgs = getvrn2Imgs(train)
 
   # get image dependencies.
@@ -154,10 +182,10 @@ def get_split_2(datasets, devsize):
   # Now, loop over the imgdeps, slowly adding things to set 'dev'
   # TODO could just be a keyset
   #trainDeps = copy.deepcopy(imgdeps) # Can just copy references. oh well. TODO
-  trainDeps = set([k for k in imgdeps])
+  trainDeps = set([k for k in imgdeps]) # imgdeps.keys()
   devDeps = set()
 
-  nDev = len(trainDeps) * devsize
+  curZS = 0
 
   movethresh = 1
   cont = True
@@ -166,19 +194,41 @@ def get_split_2(datasets, devsize):
     anyMoved = False
     for name,deps in imgdeps.iteritems():
       considerMoving = deps.minNeededForZS(trainDeps)
-      #print "For image %s: considered moving %s" % (name, str(considerMoving))
       if len(considerMoving) <= movethresh and len(considerMoving) > 0:
         # Move all from train to dev
         trainDeps -= considerMoving
         devDeps |= considerMoving
         anyMoved = True
-        if len(devDeps) > nDev:
-          cont = False
-          break
+        #if len(devDeps) > nDev:
+        #  cont = False
+        #  break
+    # count the number of 0-shot images
+    nZS = countZS(devDeps, trainDeps, imgdeps)
+    print "after iteration: obtained %s 0-shot, desire %s" % (str(nZS), desiredZS)
+    if nZS >= desiredZS or len(trainDeps) == 0:
+      cont = False
+      break
     if not anyMoved:
       movethresh += 1
 
-  return trainDeps, devDeps, imgdeps
+  ret["zstrain"] = trainDeps
+  ret["zsDev"] = devDeps
+
+  return ret, imgdeps
+
+def splitTrainAndDev():
+  print "Loading data"
+  datasets = ["train.json", "dev.json"]
+  full_data = get_joint_set(datasets)
+  print "Splitting data"
+  datasplit, _ = get_split_2(full_data, desiredZS=12000, ranDevSize=12000)
+  print "done splitting data"
+
+  for name, imgset in datasplit.iteritems():
+    data = {img: full_data[img] for img in imgset}
+    print "Writing file %s" % name
+    with open(name + ".json", "w") as f:
+      json.dump(data, f)
 
 def getDifferers(datasets):
   """
@@ -211,13 +261,14 @@ def getDifferers(datasets):
   return differCounts
 
 def main():
-  trainDeps, devDeps, imgdeps = get_split(["train.json", "dev.json"], 0.3)
+  trainDeps, devDeps, imgdeps = get_split(["train.json", "dev.json"], 0.1)
 
   # Count the number of 0-shot images we produced.
   nZero = 0
-  for img in devDeps:
-    if imgdeps[img].isZS(trainDeps):
-      nZero += 1
+  nZero = countZS(devDeps, trainDeps, imgdeps)
+  #for img in devDeps:
+  #  if imgdeps[img].isZS(trainDeps):
+  #    nZero += 1
 
   # Now, you should have moved enough images.
   print "Train size: %d" % len(trainDeps)
