@@ -85,3 +85,23 @@ class TestSplit(unittest.TestCase):
     self.assertEqual(counts, expected)
     #self.assertEqual(True, False)
 
+  def test_verbcounts(self):
+    self.datafile = "testdiffer.json"
+    counts = sp.getVerbCounts(self.datafile)
+    self.assertEqual(counts, collections.defaultdict(None, {"verb11": 4}))
+
+    self.datafile = "testfunc.json"
+    counts = sp.getVerbCounts(self.datafile)
+    self.assertEqual(counts, collections.defaultdict(None, {"verb1": 1, "verb2": 2, "verb3": 3}))
+
+  def test_distribution(self):
+    self.datafile = ["testdiffer.json", "testfunc.json"]
+    counts = sp.getDistributionOfVerbs(self.datafile)
+    expected = collections.defaultdict(lambda : collections.defaultdict(int))
+
+    expected["verb11"]["testdiffer.json"] = 4
+    expected["verb1"]["testfunc.json"] = 1
+    expected["verb2"]["testfunc.json"] = 2
+    expected["verb3"]["testfunc.json"] = 3
+
+    self.assertEqual(counts, expected)

@@ -172,7 +172,7 @@ def get_split_2(train, desiredZS=12000, ranDevSize=12000):
   ranDev = random.sample(train.keys(), ranDevSize)
   for key in ranDev:
     train.pop(key)
-  ret["zsranDev"] = ranDev
+  ret["zsRanDev"] = set(ranDev)
 
   vrn2Imgs = getvrn2Imgs(train)
 
@@ -199,9 +199,6 @@ def get_split_2(train, desiredZS=12000, ranDevSize=12000):
         trainDeps -= considerMoving
         devDeps |= considerMoving
         anyMoved = True
-        #if len(devDeps) > nDev:
-        #  cont = False
-        #  break
     # count the number of 0-shot images
     nZS = countZS(devDeps, trainDeps, imgdeps)
     print "after iteration: obtained %s 0-shot, desire %s" % (str(nZS), desiredZS)
@@ -211,10 +208,99 @@ def get_split_2(train, desiredZS=12000, ranDevSize=12000):
     if not anyMoved:
       movethresh += 1
 
-  ret["zstrain"] = trainDeps
+  ret["zsTrain"] = trainDeps
   ret["zsDev"] = devDeps
-
   return ret, imgdeps
+
+# TODO test this.
+def get_uniform_split(init, desiredOtherCount):
+  """
+  Assumes 'init' is a set.
+  """
+  ranSelection = set(random.sample(init, desiredOtherCount))
+  newInit = set([k for k in init if k not in ranSelection])
+  return newInit, ranSelection
+
+# TODO should be able to rewrite old func. in terms of this.
+# TODO want to know how many are 0-shot.
+def moveSome(init, softlim, hardlim, imgdeps):
+  print "moving some. softlim=%s, hardlim=%s" % (str(softlim), str(hardlim))
+  orig = init
+  moved = set()
+
+  cont = True
+  moveThresh = 1
+  while cont:
+    toMove = set()
+    for img in orig:
+      if len(toMove) + len(moved) > softlim:
+        break
+      considerMoving = imgdeps[img].minNeededForZS(orig)
+      # TODO enforce hardcap. Should I also check softlim here?
+      if len(considerMoving) <= moveThresh and len(considerMoving) > 0 and len(considerMoving) + len(moved) + len(toMove) < hardlim:
+        toMove |= considerMoving
+    orig -= toMove
+    moved |= toMove
+    if len(moved) >= softlim or len(moved) + moveThresh >= hardlim:
+      break
+    if len(toMove) == 0:
+      moveThresh += 1
+  return orig, moved
+
+# TODO test this.
+def get_perverb_zssplit(init, softTrainMin, hardTrainMin, imgdeps):
+  """
+  These limits are, amounts that must be in the training set!
+  """
+  def get_numerical_lim(lim, n):
+    if lim < 1.:
+      return n - int(lim * n)
+    return n - lim
+
+  # TODO make it so that softlim / hardlim is sometimes a count, sometimes a percent
+  # Get a per-verb sharding of the initial data.
+  sharding = collections.defaultdict(set)
+  for img in init:
+    sharding[imgdeps[img].verb].add(img)
+
+  # Move through each shard. Move verbs until enough have been moved.
+  cont = True
+  orig = set()
+  moved = set()
+  for verb, imgs in sharding.iteritems():
+    softlim = get_numerical_lim(softTrainMin, len(imgs))
+    hardlim = get_numerical_lim(hardTrainMin, len(imgs))
+    #print "verb=%s, softlim=%s, hardlim=%s" % (verb, str(softlim), str(hardlim))
+    origcontrib, movedcontrib = moveSome(imgs, softlim, hardlim, imgdeps)
+    orig |= origcontrib
+    moved |= movedcontrib
+    print "verb=%s, orig=%s, moved=%s" % (verb, str(len(orig)), str(len(moved)))
+  return orig, moved
+
+def filterZeroShot(dev, train, imgdeps):
+  """
+  return a dict containing the new split between 0-shotdev and wasted samples.
+  """
+  newsplit = {"zs": set(), "waste": set()}
+  for img in dev:
+    label = "waste"
+    if imgdeps[img].isZS(train):
+      label = "zs"
+    newsplit[label].add(img)
+  return newsplit
+  #return newsplit["zs"], newsplit["waste"]
+
+def filterZeroShotGood(dev, train, imgdeps):
+  """
+  return a dict containing the new split between 0-shotdev and wasted samples.
+  """
+  newsplit = {"zs": set(), "waste": set()}
+  for img in dev:
+    label = "waste"
+    if imgdeps[img].isZS(train):
+      label = "zs"
+    newsplit[label].add(img)
+  return newsplit["zs"], newsplit["waste"]
 
 def splitTrainAndDev():
   print "Loading data"
@@ -229,6 +315,178 @@ def splitTrainAndDev():
     print "Writing file %s" % name
     with open(name + ".json", "w") as f:
       json.dump(data, f)
+
+def splitTrainDevTest():
+  """
+  Problem: this function will introduce bias in the way that it splits data. For example,
+  the "easily chosen" 0-shot images will all be in Dev
+  """
+  finalSplit = {} # A dict from "datasetname" -> set(images in the dataset)
+  print "Loading data"
+  datasets = ["train.json", "dev.json", "test.json"]
+  full_data = get_joint_set(datasets)
+  print "Splitting dev from data"
+  devsplit, imgdeps = get_split_2(full_data, desiredZS=12000, ranDevSize=12000)
+  print "done splitting dev"
+
+  # Get the dataset minus the training stuff.
+  remainingTraining = {k: v for k,v in full_data.iteritems() if k in devsplit["zsTrain"]}
+
+  print "Splitting test from data"
+  testsplit, _ = get_split_2(remainingTraining, desiredZS=12000, ranDevSize=12000)
+  print "done splitting test"
+
+  print "Pruning waste from zsdev, zstest"
+  finalSplit["zsTrain"] = testsplit["zsTrain"]
+  finalSplit["zsRanTest"] = testsplit["zsRanDev"] # [sic], naming is suboptimal
+  finalSplit["zsRanDev"] = devsplit["zsRanDev"]
+
+  splitDict = filterZeroShot(devsplit["zsDev"], finalSplit["zsTrain"], imgdeps)
+  finalSplit["zsDev"] = splitDict["zs"]
+  finalSplit["zsDevWaste"] = splitDict["waste"]
+
+  splitDict = filterZeroShot(testsplit["zsDev"], finalSplit["zsTrain"], imgdeps)
+  finalSplit["zsTest"] = splitDict["zs"]
+  finalSplit["zsTestWaste"] = splitDict["waste"]
+
+  saveDatasets(finalSplit, full_data)
+
+def saveDatasets(splits, full_data):
+  """
+  Saves splits of the full_data set, as enumerated by the map "splits"
+  splits is a dictionary from "dataset_name" -> set(images_in_dataset)
+  """
+  for name, imgset in splits.iteritems():
+    data = {img: full_data[img] for img in imgset}
+    print "Writing file %s" % name
+    with open(name + ".json", "w") as f:
+      json.dump(data, f)
+
+def splitTrainDevTestEvenly():
+  """
+  randevsize = 1
+  rantestsize = 1
+  devzs = 1
+  testzs = 1
+  datasets = ["testfunc.json"]
+  """
+
+  randevsize = 12000
+  rantestsize = 12000
+  devzs = 12000
+  testzs = 12000
+  datasets = ["train.json", "dev.json", "test.json"]
+
+  finalSplit = {}
+  print "Loading data"
+  full_data = get_joint_set(datasets)
+  print "Splitting zero-shot from data"
+  devsplit, imgdeps = get_split_2(full_data, desiredZS=(devzs+testzs), ranDevSize=(randevsize+rantestsize))
+  print "Done splitting zero-shot"
+
+  def addFilteredSubsetsToDict(dictionary, source, condition, passName, failName):
+    dictionary[passName] = set()
+    dictionary[failName] = set()
+    for k in source:
+      loc = failName
+      if condition(k):
+        loc = passName
+      dictionary[loc].add(k)
+
+  finalSplit["zsTrain"] = devsplit["zsTrain"]
+  ranDev = set(random.sample(devsplit["zsRanDev"], randevsize))
+  addFilteredSubsetsToDict(finalSplit, devsplit["zsRanDev"], lambda x: x in ranDev, "zsRanDev", "zsRanTest")
+
+  # TODO can I use the 'filter()' function?
+  print "Filtering out zero-shot images."
+  split = filterZeroShot(devsplit["zsDev"], finalSplit["zsTrain"], imgdeps)
+
+  ndevzs = len(split["zs"]) / 2
+  zsDev = set(random.sample(split["zs"], ndevzs))
+  addFilteredSubsetsToDict(finalSplit, split["zs"], lambda x: x in zsDev, "zsDev", "zsTest")
+  finalSplit["waste"] = split["waste"]
+
+  saveDatasets(finalSplit, full_data)
+
+def splitTrainDevTestMinInTrain():
+  # TODO automatically chosen!
+  """
+  randevsize = 1
+  rantestsize = 1
+  devzs = 1
+  testzs = 1
+  datasets = ["testfunc.json"]
+  """
+  randevsize = 12000
+  rantestsize = 12000
+  devzs = 12000
+  testzs = 12000
+  datasets = ["train.json", "dev.json", "test.json"]
+
+  finalSplit = {}
+  print "Loading Data"
+  full_data = get_joint_set(datasets)
+  imgdeps = getImageDeps(getvrn2Imgs(full_data))
+
+  print "getting uniform split"
+  init = set(full_data.keys())
+  init, finalSplit["zsRanDev"] = get_uniform_split(init, randevsize)
+  init, finalSplit["zsRanTest"] = get_uniform_split(init, rantestsize)
+
+  N = len(init)
+  softTrainLim = (N - (devzs + testzs) * 2) / (1. * N) # corresponds to 52%
+  hardTrainLim = (N - (devzs + testzs) * 2) / (1. * N)
+  print N
+  print softTrainLim
+  print hardTrainLim
+  #return N, int((devzs + testzs) * 1.1 * N)
+
+  finalSplit["zsTrain"], zsDevTestWaste = get_perverb_zssplit(init, softTrainLim, hardTrainLim, imgdeps)
+  zsDevTest, finalSplit["waste"] = filterZeroShotGood(zsDevTestWaste, finalSplit["zsTrain"], imgdeps)
+  finalSplit["zsDev"], finalSplit["zsTest"] = get_uniform_split(zsDevTest, len(zsDevTest) / 2)
+
+  for k,v in finalSplit.iteritems():
+    print "split %s: %s" % (str(k), str(len(v)))
+
+  saveDatasets(finalSplit, full_data)
+
+def getVerbCounts(filename):
+  ret = collections.defaultdict(int)
+  full_data = get_joint_set(filename)
+  for v in full_data.itervalues():
+    ret[v["verb"]] += 1
+  return ret
+
+def getDistributionOfVerbs(datasets):
+  # get a defaultdict of verb counts for each dataset.
+
+  counts = {}
+  for filename in datasets:
+    counts[filename] = getVerbCounts(filename)
+
+  # Combine the counts into a final dict.
+  finalcounts = collections.defaultdict(lambda : collections.defaultdict(int))
+  for filename, wordcount in counts.iteritems():
+    for word, frequency in wordcount.iteritems():
+      finalcounts[word][filename] += frequency
+  return finalcounts
+
+def print_verb_distribution(distribution):
+  order = ["zsTrain", "zsDev", "zsTest", "zsRanDev", "zsRanTest", "waste"]
+  s = ""
+  for o in order:
+    s += "%s   " % o
+  print s
+  for word, stats in distribution.iteritems():
+    s = ""
+    for o in order:
+      s += "%d  " % stats["%s.json" % o]
+    print s
+
+
+def getDistStub():
+  datasets = ["zsTrain.json", "zsRanDev.json", "zsRanTest.json", "zsDev.json", "zsTest.json", "waste.json"]
+  return getDistributionOfVerbs(datasets)
 
 def getDifferers(datasets):
   """
