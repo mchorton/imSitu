@@ -434,8 +434,10 @@ def splitTrainDevTestMinInTrain():
   init, finalSplit["zsRanTest"] = get_uniform_split(init, rantestsize)
 
   N = len(init)
-  softTrainLim = (N - (devzs + testzs) * 2) / (1. * N) # corresponds to 52%
-  hardTrainLim = (N - (devzs + testzs) * 2) / (1. * N)
+  #softTrainLim = (N - (devzs + testzs) * 2) / (1. * N) # corresponds to 52%
+  #hardTrainLim = (N - (devzs + testzs) * 2) / (1. * N)
+  softTrainLim = 0.5
+  hardTrainLim = 0.5
   print N
   print softTrainLim
   print hardTrainLim
@@ -483,7 +485,6 @@ def print_verb_distribution(distribution):
       s += "%d  " % stats["%s.json" % o]
     print s
 
-
 def getDistStub():
   datasets = ["zsTrain.json", "zsRanDev.json", "zsRanTest.json", "zsDev.json", "zsTest.json", "waste.json"]
   return getDistributionOfVerbs(datasets)
@@ -517,6 +518,18 @@ def getDifferers(datasets):
         differCounts[ndiff] += 1
   print str(differCounts)
   return differCounts
+
+def get_names(filename, out):
+  data = get_joint_set(filename)
+  output = "\n".join(data.keys())
+  with open(out, "w") as f:
+    f.write(output)
+
+def get_all_names():
+  names = ["zsTrain.json", "zsDev.json", "zsTest.json", "zsRanDev.json", "zsRanTest.json", "waste.json"]
+  for name in names:
+    outname = name.replace(".json", ".txt")
+    get_names(name, outname)
 
 def main():
   trainDeps, devDeps, imgdeps = get_split(["train.json", "dev.json"], 0.1)
