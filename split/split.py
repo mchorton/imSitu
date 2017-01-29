@@ -77,6 +77,9 @@ def getvrn2Imgs(dataset):
         vrn2Imgs[key] = vrn2Imgs.get(key, set()) | set([imgname])
   return vrn2Imgs
 
+def getv2r(dataset):
+  return {v["verb"]: set(v["frames"][0].keys()) for k,v in dataset.iteritems()}
+
 def getImageDeps(vrn2Imgs):
   """
   Gets the ImgDep objects from a vrn2Imgs
