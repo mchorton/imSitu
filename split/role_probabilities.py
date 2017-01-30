@@ -583,11 +583,13 @@ def generateHTMLForExp(loc):
   for n, similarity in enumerate(similarities[:5]):
     print "--> %d: %s" % (n, similarity)
 
-  for n, similarity in enumerate(similarities, start=(len(similarities)-5)):
+  for n, similarity in enumerate(similarities[-5:], start=(len(similarities)-5)):
     print "--> %d: %s" % (n, similarity)
 
   showTopN = 5
   showBotN = 5
+
+  print "nn2vrkeys: %s" % nn2vr2score.keys()
 
   goodToShow = set([vr for nn, vr in nn2vr2score.iteritems() if nn in similarities[:5]])
   badToShow = set([vr for nn, vr in nn2vr2score.iteritems() if nn in similarities[-5:]])
