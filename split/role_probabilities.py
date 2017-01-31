@@ -213,7 +213,7 @@ def decodeNoun(noun):
   return _nouncache.get(noun, {"gloss": [noun]})["gloss"][0]
 
 def decodeNouns(*args):
-  tuple(map(decodeNoun, args))
+  return tuple(map(decodeNoun, args))
 
 def runGetSimilarities():
   datasets = ["zsTrain.json"]
@@ -419,7 +419,9 @@ def saveAllDistances(data, vrProbs, outdir):
     print "...done."
 
 def twoFixedStub():
-  generateAllDistOnly2Fixed("data/twoFixedDist/")
+  generateAllDistVecStyle("data/twoFixedDist/")
+  getAveragedRankings("data/twoFixedDist/")
+  generateHTMLForExp("data/twoFixedDist/")
 
 def vecStyleStub():
   #generateAllDistVecStyle("data/vecStyle/")
@@ -577,22 +579,41 @@ def generateHTMLForExp(loc):
 
   nn2vr2score = cPickle.load(open("%s%s.pik" % (loc, "nn2vr2score"), "r"))
 
+  # Get a lookup set from noun to images for that noun
+  n2Imgs = {}
+  for vrn, images in vrn2Imgs.iteritems():
+    noun = vrn[2]
+    if vrn not in n2Imgs:
+      n2Imgs[noun] = set()
+    n2Imgs[noun] |= images
+
   # Get a sorted list of the similarities, excluding duplicates
   similarities = [s for s in similarities if s[0] < s[1]]
+  # remove all noun pairs that have the same images
+  similarities = [s for s in similarities if n2Imgs[s[0]] != n2Imgs[s[1]]]
   print "===> TOP 5"
   for n, similarity in enumerate(similarities[:5]):
-    print "--> %d: %s" % (n, similarity)
+    print "--> %d: %s" % (n, map(decodeNoun, similarity))
 
   for n, similarity in enumerate(similarities[-5:], start=(len(similarities)-5)):
-    print "--> %d: %s" % (n, similarity)
+    print "--> %d: %s" % (n, map(decodeNoun, similarity))
 
   showTopN = 5
   showBotN = 5
 
-  print "nn2vrkeys: %s" % nn2vr2score.keys()
+  print "nn2vrkeys: %s" % nn2vr2score.keys()[:5]
 
-  goodToShow = set([vr for nn, vr in nn2vr2score.iteritems() if nn in similarities[:5]])
-  badToShow = set([vr for nn, vr in nn2vr2score.iteritems() if nn in similarities[-5:]])
+  #goodToShow = set([verbrole for verbrole in vr.keys() for nn, vr in nn2vr2score.iteritems() if nn in map(lambda x: (x[0],x[1]), similarities[:5])])
+  #badToShow = set([verbrole for verbrole in vr.keys() for nn, vr in nn2vr2score.iteritems() if nn in map(lambda x: (x[0],x[1]), similarities[-5:])])
+  goodToShow = set()
+  badToShow = set()
+
+  for nn, vr in nn2vr2score.iteritems():
+    if nn in map(lambda x: (x[0], x[1]), similarities[:5]):
+      goodToShow |= set(vr.keys())
+    if nn in map(lambda x: (x[0], x[1]), similarities[-5:]):
+      badToShow |= set(vr.keys())
+
   print "Good Examples: %s" % goodToShow
   print "Bad Examples: %s" % badToShow
   toShow = goodToShow | badToShow
