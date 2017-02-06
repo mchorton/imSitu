@@ -522,6 +522,36 @@ def getDifferers(datasets):
   print str(differCounts)
   return differCounts
 
+def getnn2vr2ndiffs(datasets):
+  """
+  Determines how many verb-roles differ between each pair of images that
+  share a verb class.
+  """
+  #data = get_joint_set(["train.json", "dev.json"])
+  data = get_joint_set(datasets)
+  #data = get_joint_set(["testfunc.json"])
+  vrn2Imgs = getvrn2Imgs(data)
+  imgdeps = getImageDeps(vrn2Imgs)
+
+  nn2vr2ndiffs = {}
+
+  verbsets = collections.defaultdict(list)
+  for name,imgdep in imgdeps.iteritems():
+    verbsets[imgdep.verb].append(name)
+  classnum = 0
+  totclasses = len(verbsets)
+  for verb, names in verbsets.iteritems():
+    classnum += 1
+    print "===> Considering Verb Class %d of %d" % (classnum, totclasses)
+    for i in range(len(names)):
+      for j in range(len(names)):
+        vr = (verb, role)
+        key = (names[i], names[j])
+        nn2vr2diffs[(verb, role)]
+        nn2ndiffs[key] = img1.numDifferentLabelings(img2)
+  print str(differCounts)
+  return differCounts
+
 def get_names(filename, out):
   data = get_joint_set(filename)
   output = "\n".join(data.keys())
