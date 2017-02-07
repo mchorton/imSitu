@@ -3,7 +3,7 @@ import role_probabilities as rp
 import split as sp
 import gensim.models.word2vec as w2v
 import itertools as it
-#import printts
+import json
 
 def generateW2VDist(dirName):
   modelFile = "data/word2vec/GoogleNews-vectors-negative300.bin"
@@ -35,7 +35,7 @@ def makeAll():
   #rp.getAveragedRankings(dirName)
   rp.generateHTMLForExp(dirName)
 
-def makeHTML(dirName):
+def makeHTML(dirName, thresh=2.):
   """
   Make HTML that shows one image pair per line, ordered by distance between the
   images in similarity space.
@@ -69,24 +69,29 @@ def makeHTML(dirName):
   #similarities = [s for s in similarities if s[0] < s[1]]
   #similarities = [s for s in similarities if s[2] < 99]
   #similarities = similarities[:500] + similarities[-500:]
-  print "subsampling similarities..."
-  stride = len(similarities) / 50
-  similarities = similarities[::stride]
-  print "similarties: %s" % similarities
+  #print "subsampling similarities..."
+  #stride = len(similarities) / 50
+  #similarities = similarities[::stride]
 
   imgdeps = sp.getImageDeps(vrn2Imgs)
 
   for n1, n2, sim in similarities:
-    print "sim btw %s and %s: %f" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim)
-    #toShow[(n1, n2, sim)] = set()
     for vr, imgs in n2vr2Imgs[n1].iteritems():
       firstset = imgs
       secondset = n2vr2Imgs[n2].get(vr, [])
       for one,two in it.product(firstset, secondset):
         if imgdeps[one].numDifferentLabelings(imgdeps[two]) == 1:
-          #toShow.add((one, two))
-          toShow2.append((n1, n2, sim, one, two))
-          #toShow[(n1, n2, sim)].add((one, two))
+          toShow2.append([n1, n2, sim, one, two])
+
+  print "There are %d valid pairs" % len(toShow2)
+  toShow2 = [t for t in toShow2 if t[2] < thresh]
+  print "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2))
+  json.dump(toShow2, open(dirName + "chosen_pairs_thresh_%.3f.json" % thresh, "w"))
+
+  subsampleFactor = 1000
+  print "Subsampling similarities by %d" % subsampleFactor
+  stride = len(toShow2) / subsampleFactor
+  toShow2 = toShow2[::stride]
 
   # get a table
   htmlTable = rp.HtmlTable()
