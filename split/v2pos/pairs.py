@@ -6,6 +6,7 @@ import os
 import re
 import itertools as it
 import htmlgen
+import v2pos as v2pos
 
 class FrameInfo(object):
   nameRegex = re.compile("([a-z]+)_season([a-z0-9]+)_disc(\d+)_(\d+)-(\d+).jpg")
@@ -57,6 +58,10 @@ def get_image_frames(filenames):
   examples.append(curlist)
   return [map(str, sublist) for sublist in examples]
 
+def get_imgref(img):
+  return htmlgen.imgref("annotated_images/" + img)
+
+
 def generateHTML():
     # TODO you can use "annotated_images" instead.
     datadir = "data/VideoPose2/annotated_images/"
@@ -68,10 +73,18 @@ def generateHTML():
     
     table = htmlgen.HtmlTable()
 
-    def get_imgref(img):
-      return htmlgen.imgref("annotated_images/" + img)
-
     for pair in pairs:
       table.addRow(map(get_imgref, pair))
 
     table.save(outhtml)
+
+def viewClips():
+  outhtml = "data/VideoPose2/clips.html"
+  filenames = v2pos.getFileNames()
+  frames = get_image_frames(filenames)
+  table = htmlgen.HtmlTable()
+
+  for n, clip in enumerate(frames, start=1):
+    table.addRow(("Frame %d/%d" % (n, len(frames)),))
+    table.addRow(map(get_imgref, clip))
+  table.save(outhtml)

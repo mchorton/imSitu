@@ -75,6 +75,8 @@ def makeHTML(dirName, thresh=2.):
 
   imgdeps = sp.getImageDeps(vrn2Imgs)
 
+  # TODO this will include examples that differ by 1, even if the thing that
+  # differs isn't n1=>n2
   for n1, n2, sim in similarities:
     for vr, imgs in n2vr2Imgs[n1].iteritems():
       firstset = imgs
