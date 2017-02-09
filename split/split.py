@@ -54,7 +54,26 @@ class ImgDep():
         minlen = len(curset)
     return minset
 
+  def differentLabelings(self, otherImgDep):
+    """
+    Find the roles over which these differ.
+    Return as a list: [(verb, role1), (verb, role2), ...]
+    """
+    diffRoles = []
+    if self.verb is None or self.verb != otherImgDep.verb:
+      return None
+    numDifferences = 0
+    for k,v in self.role2Nouns.iteritems():
+      if len(otherImgDep.role2Nouns[k] & v) == 0:
+        diffRoles.append(k)
+    return diffRoles
+
   def numDifferentLabelings(self, otherImgDep):
+    ret = self.differentLabelings(otherimgDep)
+    if ret is None:
+      return None
+    return len(ret)
+    """
     if self.verb is None or self.verb != otherImgDep.verb:
       return None
     numDifferences = 0
@@ -62,6 +81,15 @@ class ImgDep():
       if len(otherImgDep.role2Nouns[k] & v) == 0:
         numDifferences += 1
     return numDifferences
+    """
+
+def getFrequencies(imgdeps):
+  ret = collections.defaultdict(int)
+  for img,dep in imgdeps.iteritems():
+    seen = set([n for sublist in dep.role2Nouns.values() for n in sublist])
+    for elem in seen:
+      ret[elem] += 1
+  return ret
 
 def getvrn2Imgs(dataset):
   """

@@ -35,10 +35,11 @@ def makeAll():
   #rp.getAveragedRankings(dirName)
   rp.generateHTMLForExp(dirName)
 
-def makeHTML(dirName, thresh=2.):
+def makeHTML(dirName, thresh=2., freqthresh = 0):
   """
   Make HTML that shows one image pair per line, ordered by distance between the
   images in similarity space.
+  freqthresh: if a noun occurs freqthresh or fewer times, it'll be excluded.
   """
   loc = dirName
   datasets = ["zsTrain.json"]
@@ -75,20 +76,39 @@ def makeHTML(dirName, thresh=2.):
 
   imgdeps = sp.getImageDeps(vrn2Imgs)
 
-  # TODO this will include examples that differ by 1, even if the thing that
-  # differs isn't n1=>n2
+  # Get the number of images in which each noun occurs.
+  freqs = sp.getFrequencies(imgdeps)
+
+  # TODO:
+  # Should I expand to include "(n1, n2)" and "(n2, n1)"? Only includes one of them for now.
+  # Should I remove rare nouns? I haven't yet.
+  nPassSame = 0
+  nPassDiff = 0
   for n1, n2, sim in similarities:
+    if n1 == "" or n2 == "":
+      continue
+    if freqs[n1] < freqthresh or freqs[n2] < freqthresh:
+      continue
     for vr, imgs in n2vr2Imgs[n1].iteritems():
       firstset = imgs
       secondset = n2vr2Imgs[n2].get(vr, [])
       for one,two in it.product(firstset, secondset):
-        if imgdeps[one].numDifferentLabelings(imgdeps[two]) == 1:
-          toShow2.append([n1, n2, sim, one, two])
+        dl = imgdeps[one].differentLabelings(imgdeps[two])
+        if len(dl) == 1:
+          if dl[0] == vr:
+            nPassSame += 1
+            toShow2.append([n1, n2, sim, one, two])
+          else:
+            nPassDiff += 1
+  
+  print "nPassSame=%s" % str(nPassSame)
+  print "nPassDiff=%s" % str(nPassDiff)
+
 
   print "There are %d valid pairs" % len(toShow2)
   toShow2 = [t for t in toShow2 if t[2] < thresh]
   print "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2))
-  json.dump(toShow2, open(dirName + "chosen_pairs_thresh_%.3f.json" % thresh, "w"))
+  json.dump(toShow2, open(dirName + "chosen_pairs_thresh_%.3f_freqthresh_%d.json" % (thresh, freqthresh), "w"))
 
   subsampleFactor = 1000
   print "Subsampling similarities by %d" % subsampleFactor
@@ -102,7 +122,7 @@ def makeHTML(dirName, thresh=2.):
     img2urls = set([rp.getImgUrl(two)])
     htmlTable.addRow(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s)" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim, one, two))
 
-  with open(dirName + "all_sim_prs.html", "w") as f:
+  with open(dirName + "all_sim_prs_thresh_%.3f_freqthresh_%d.html" % (thresh, freqthresh), "w") as f:
     f.write(str(htmlTable))
 
 if __name__ == '__main__':
