@@ -4,6 +4,7 @@ import split as sp
 import gensim.models.word2vec as w2v
 import itertools as it
 import json
+import copy
 
 def generateW2VDist(dirName):
   modelFile = "data/word2vec/GoogleNews-vectors-negative300.bin"
@@ -108,12 +109,25 @@ def makeHTML(dirName, thresh=2., freqthresh = 0):
   print "There are %d valid pairs" % len(toShow2)
   toShow2 = [t for t in toShow2 if t[2] < thresh]
   print "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2))
+  print "Expanding (n1, n2) => (n1, n2), (n2, n1)"
+  nextShow = []
+  for elem in toShow2:
+    nextShow.append(elem)
+    newelem = copy.deepcopy(elem)
+    newelem[0] = elem[1]
+    newelem[1] = elem[0]
+    newelem[3] = elem[4]
+    newelem[4] = elem[3]
+    nextShow.append(newelem)
+  toShow2 = nextShow
+  print "There are now %d valid pairs" % len(toShow2)
   json.dump(toShow2, open(dirName + "chosen_pairs_thresh_%.3f_freqthresh_%d.json" % (thresh, freqthresh), "w"))
 
   subsampleFactor = 1000
   print "Subsampling similarities by %d" % subsampleFactor
   stride = len(toShow2) / subsampleFactor
-  toShow2 = toShow2[::stride]
+  cont = toShow2[:20]
+  toShow2 = cont + toShow2[::stride]
 
   # get a table
   htmlTable = rp.HtmlTable()
