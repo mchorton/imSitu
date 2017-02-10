@@ -17,6 +17,7 @@ class ImgDep():
     # Map from verb-role to set of image names.
     self.deps = {} # TODO add_deps function?
     self.role2Nouns = {}
+    self.role2NounList = {}
   def __str__(self):
     return "(%s, %s)" % (str(self.name), str(self.deps))
   def __repr__(self):
@@ -108,9 +109,26 @@ def getvrn2Imgs(dataset):
 def getv2r(dataset):
   return {v["verb"]: set(v["frames"][0].keys()) for k,v in dataset.iteritems()}
 
+# TODO add a flag to this instead.
 def getImageDeps(vrn2Imgs):
   """
   Gets the ImgDep objects from a vrn2Imgs
+  """
+  imgdeps = {} # map from image name to ImgDep objects
+  for vrn, imgs in vrn2Imgs.iteritems(): # TODO does this properly handle empty sets?
+    for img in imgs:
+      if img not in imgdeps:
+        imgdeps[img] = ImgDep(img)
+      vr = vrn[:2]
+      imgdeps[img].deps[vr] = imgdeps[img].deps.get(vr, set()) | imgs
+      imgdeps[img].role2Nouns[vr] = imgdeps[img].role2Nouns.get(vr, set()) | set([vrn[2]])
+      imgdeps[img].role2NounList[vr] = imgdeps[img].role2NounList.get(vr, []) + [vrn[2]]
+  return imgdeps
+
+def getSingletonImageDeps(vrn2Imgs):
+  """
+  Gets the ImgDep objects from a vrn2Imgs. This version selects a single noun from each
+  role to serve as the true label for that verb-role.
   """
   imgdeps = {} # map from image name to ImgDep objects
   for vrn, imgs in vrn2Imgs.iteritems(): # TODO does this properly handle empty sets?
