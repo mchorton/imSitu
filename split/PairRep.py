@@ -20,7 +20,7 @@ class PairRep(object):
     with open(outHTML, "w") as f:
       f.write(str(htmlTable))
 
-def get_vr_html(pairData = "data/vecStyle/chosen_pairs_thresh_2.0__freqthresh_10__bestNounOnly_True__blacklistprs_[set(['woman', 'man'])]__noThreeLabel_True.json", vrs = [("pushing", "item"), ("licking", "item"), ("rinsing", "item"), ("pouring", "liquid")]):
+def get_vr_html(pairData = "data/vecStyle/chosen_pairs_thresh_2.0__freqthresh_10__bestNounOnly_True__blacklistprs_[set(['woman', 'man'])]__noThreeLabel_True.json", vrs = [("pushing", "item"), ("licking", "item"), ("rinsing", "object"), ("pouring", "substance")]):
   rep = PairRep()
   rep.load(pairData)
 
