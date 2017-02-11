@@ -5,6 +5,7 @@ import gensim.models.word2vec as w2v
 import itertools as it
 import json
 import copy
+import collections
 from nltk import wordnet as wn
 
 def generateW2VDist(dirName):
@@ -79,8 +80,39 @@ def get_best_noun(nouns, wn_map):
     exit(1)
   return bestnoun
 
+class DataExaminer(object):
+  """
+  Class used to preprocess the data and store useful information.
+  """
+  def __init__(self):
+    pass
+  def analyze(self, dataset):
+    self.wn_map = get_wn_map()
+    self.im2vr2nouns = get_im2vr2nouns(dataset)
+    #self.im2vr2bestnoun = get_im2vr2bestnoun(dataset)
+    #self.imgdeps = 
+  def getBestNoun(self, image, vr):
+    return get_best_noun(self.getNouns(image, vr), self.wn_map)
+  def getNouns(self, image, vr):
+    return self.im2vr2nouns[image][vr]
+
+def get_im2vr2nouns(dataset):
+  """
+  Dataset: the loaded data.
+  """
+  wn_map = get_wn_map()
+  ret = {}
+  for imgname, labeling in dataset.iteritems():
+    verb = labeling["verb"]
+    vr2nouns = {}
+    for frame in labeling["frames"]:
+      for role, noun in frame.iteritems():
+        vr2nouns[(verb, role)] = vr2nouns.get((verb, role), []) + [noun]
+    ret[imgname] = vr2nouns
+  return ret
 
 def get_im2vr2bestnoun(dataset):
+  # TODO I'd like to deprecate this, but it's way faster than the data examiner(?)
   """
   Dataset: the loaded data.
   """
@@ -137,7 +169,7 @@ def getim2vr2bestnoun(wn_map, imgdeps):
   return ret
 
 # TODO un-blacklist "man, woman"
-def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True): # TODO man, 
+def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True):
   """
   Make HTML that shows one image pair per line, ordered by distance between the
   images in similarity space.
@@ -146,6 +178,7 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
   """
   loc = dirName
   datasets = ["zsTrain.json"]
+  #datasets = ["zsSmall.json"]
   similarities = cPickle.load(open("%sflat_avg.pik" % loc, "r"))
   desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
@@ -186,13 +219,17 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
   wn_map = get_wn_map()
 
   im2vr2bestnoun = get_im2vr2bestnoun(train)
+  examiner = DataExaminer()
+  examiner.analyze(train)
 
   # TODO:
   # Should I expand to include "(n1, n2)" and "(n2, n1)"? Only includes one of them for now.
   # Should I remove rare nouns? I haven't yet.
+  stats = collections.defaultdict(int)
   nPassSame = 0
   nPassDiff = 0
   nNotBestLabel = 0 # This number is meaningless since I didn't check roles before incrementing. Oh well.
+  print "looping..."
   for n1, n2, sim in similarities:
     if n1 == "" or n2 == "":
       continue
@@ -204,23 +241,28 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
       firstset = imgs
       secondset = n2vr2Imgs[n2].get(vr, [])
       for one,two in it.product(firstset, secondset):
+        #bestOneLabel = examiner.getBestNoun(one, vr)
+        #bestTwoLabel = examiner.getBestNoun(two, vr)
         bestOneLabel = im2vr2bestnoun[one][vr]
         bestTwoLabel = im2vr2bestnoun[two][vr]
         if bestNounOnly and (n1 != bestOneLabel or n2 != bestTwoLabel):
           nNotBestLabel += 1
           continue
+        if noThreeLabel and (len(set(examiner.getNouns(one, vr))) == 3 or len(set(examiner.getNouns(two, vr))) == 3):
+          stats["n3lab"] += 1
+          continue
         dl = imgdeps[one].differentLabelings(imgdeps[two])
         if len(dl) == 1:
           if dl[0] == vr:
             nPassSame += 1
-            toShow2.append([n1, n2, sim, one, two])
+            toShow2.append([n1, n2, sim, one, two, tuple(vr)])
           else:
             nPassDiff += 1
   
   print "nPassSame=%s" % str(nPassSame)
   print "nPassDiff=%s" % str(nPassDiff)
   print "nNotBestLabel=%s" % str(nNotBestLabel)
-
+  print "stats=%s" % str(stats)
 
   print "There are %d valid pairs" % len(toShow2)
   toShow2 = [t for t in toShow2 if t[2] < thresh]
@@ -237,25 +279,25 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
     nextShow.append(newelem)
   toShow2 = nextShow
   print "There are now %d valid pairs" % len(toShow2)
-  suffix = "thresh_%.3f_freqthresh_%d_bestNounOnly_%s" % (thresh, freqthresh, str(bestNounOnly))
+  suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel))
   json.dump(toShow2, open(dirName + "chosen_pairs_%s.json" % (suffix), "w"))
 
   subsampleFactor = 1000
   print "Subsampling similarities by %d" % subsampleFactor
   stride = len(toShow2) / subsampleFactor
   cont = toShow2[:20]
-  toShow2 = cont + toShow2[::stride]
+  if stride > 0:
+    toShow2 = cont + toShow2[::stride]
 
   # get a table
   htmlTable = rp.HtmlTable()
-  for n1, n2, sim, one, two in toShow2:
+  for n1, n2, sim, one, two, vr in toShow2:
     img1urls = set([rp.getImgUrl(one)])
     img2urls = set([rp.getImgUrl(two)])
-    htmlTable.addRow(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s)" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim, one, two))
+    htmlTable.addRow(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s, %s)" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim, one, two, str(vr)))
 
   with open(dirName + "all_sim_prs_%s.html" % (suffix), "w") as f:
     f.write(str(htmlTable))
-
 
 def fakeMakeHTML(dirName, thresh=2., freqthresh = 10, blacklist = set(["man", "woman"])):
   exit(1) # TODO deprecated.
@@ -270,7 +312,6 @@ def fakeMakeHTML(dirName, thresh=2., freqthresh = 10, blacklist = set(["man", "w
   desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
   similarities = desired
-
 
   train = sp.get_joint_set(datasets)
   vrn2Imgs = sp.getvrn2Imgs(train)
