@@ -252,8 +252,12 @@ class HtmlTable():
     </html>"""
     self.imPerRow = 4
   def addRow(self, urls1, urls2, label):
+    # TODO this is deprecated
     self.rows.append([urls1, urls2, label])
+  def addRowNice(self, *args):
+    self.rows.append(args)
   def __str__(self):
+    # TODO this is deprecated.
     output = ""
     output += self.header
     output += "<table>"
@@ -261,7 +265,7 @@ class HtmlTable():
       output += "<tr>\n"
       for n, elem in enumerate(row):
         output += "<th>"
-        if n in (0,1):
+        if not isinstance(elem, basestring):
           output += "\n".join(map("".join, map(mytostr, *[iter(elem)]*self.imPerRow)))
         else:
           output += "%s" % elem
@@ -270,6 +274,8 @@ class HtmlTable():
     output += "</table>"
     output += self.footer
     return output
+
+
 
 # TODO make this local
 def getImgUrl(name):
@@ -299,13 +305,18 @@ def generateHTMLHelper(similarities, verb, role, vrn2Imgs, outdir):
   similarities - a list like [(noun1, noun2, similarity_score as a float), (...), ...]
   """
   htmlTable = HtmlTable()
+  dataset = sp.get_joint_dataset("zsTrain.json") # TODO a tad hacky.
+  img2NiceLabel = getImg2NiceLabel(dataset)
 
   for k in similarities:
     img1Urls = getImgUrls(getNounImgs(verb, role, k[0], vrn2Imgs))
     img2Urls = getImgUrls(getNounImgs(verb, role, k[1], vrn2Imgs))
     if img1Urls == img2Urls or 0 in map(len, (img1Urls, img2Urls)):
       continue
-    htmlTable.addRow(img1Urls, img2Urls, "d(%s,%s)=%.4f" % (decodeNoun(k[0]), decodeNoun(k[1]), k[2]))
+    nicelabel1 = str(img2NiceLabels[k[3]])
+    nicelabel2 = str(img2NiceLabels[k[4]])
+    # TODO add the nice labels.
+    htmlTable.addRowNice(img1Urls, img2Urls, "d(%s,%s)=%.4f" % (decodeNoun(k[0]), decodeNoun(k[1]), k[2]), nicelabel1, nicelabel2)
   with open(outdir + "%s-%s.html" % (verb, role), "w") as f:
     f.write(str(htmlTable))
 

@@ -6,6 +6,7 @@ import itertools as it
 import json
 import copy
 import collections
+import PairRep as pr
 from nltk import wordnet as wn
 
 def generateW2VDist(dirName):
@@ -289,12 +290,17 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
   if stride > 0:
     toShow2 = cont + toShow2[::stride]
 
+  # TODO rest of this should be a separate function
+  img2NiceLabels = pr.getImg2NiceLabel(train)
+
   # get a table
   htmlTable = rp.HtmlTable()
   for n1, n2, sim, one, two, vr in toShow2:
+    nicelabel1 = str(img2NiceLabels[one])
+    nicelabel2 = str(img2NiceLabels[two])
     img1urls = set([rp.getImgUrl(one)])
     img2urls = set([rp.getImgUrl(two)])
-    htmlTable.addRow(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s, %s)" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim, one, two, str(vr)))
+    htmlTable.addRowNice(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s, %s)" % (rp.decodeNoun(n1), rp.decodeNoun(n2), sim, one, two, str(vr)), nicelabel1, nicelabel2)
 
   with open(dirName + "all_sim_prs_%s.html" % (suffix), "w") as f:
     f.write(str(htmlTable))
