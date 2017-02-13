@@ -1,4 +1,5 @@
 import role_probabilities as rp
+import collections
 import unittest
 import math
 
@@ -46,6 +47,7 @@ class TestRP(unittest.TestCase):
     dist = vrp.getDistance("role1", "noun1", "noun1b")
     self.assertEqual(dist, 0)
   """
+  """
   def test_allgram(self):
     wildcardCounts = {
         ("1", "1"): 1,
@@ -61,9 +63,7 @@ class TestRP(unittest.TestCase):
 
     wildcardCounts = collections.defaultdict(int, wildcardCounts)
 
-    weights = {
-        2: {1: 0.3}, {2: 0.7}
-      }
+    weights = {2: {1: 0.3}, 3: {2: 0.7}}
 
     prob = allgramProb(("1", "1"), 1, wilcardCounts, weights)
     self.assertEqual(0.3 + 0.5 * 0.7, prob)
@@ -73,3 +73,4 @@ class TestRP(unittest.TestCase):
 
     prob = allgramProb(("1", "2"), 0, wilcardCounts, weights)
     self.assertEqual(0.3 + 0.5 * 0.7, prob)
+  """

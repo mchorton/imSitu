@@ -1,26 +1,8 @@
 import role_probabilities as rp
+import utils as ut
 import json
-import split as sp
+import data_utils as du
 
-"""
-Representation of a set of image pairs. E.g., 
-(noun1, noun2, similarities, img1name, img2name, vr) # TODO you also want the role in which the verbs differ.
-"""
-
-"""
-def getvrn2Imgs(dataset):
-  Gets the (verb,role,noun) -> (set of images that use that combination), 
-  from the original dataset.
-  vrn2Imgs = {}
-  for imgname, labeling in dataset.iteritems():
-    verb = labeling["verb"]
-    for frame in labeling["frames"]:
-      for role, noun in frame.iteritems():
-        key = (verb, role, noun)
-        vrn2Imgs[key] = vrn2Imgs.get(key, set()) | set([imgname])
-  return vrn2Imgs
-
-"""
 def sampleImg1(sample):
   return sample[3]
 def sampleImg2(sample):
@@ -38,9 +20,13 @@ def getImg2NiceLabel(dataset):
     img2NiceLabel[imgname] = niceFrames
   return img2NiceLabel
 
+"""
+Representation of a set of image pairs. E.g., 
+(noun1, noun2, similarities, img1name, img2name, vr) # TODO you also want the role in which the verbs differ.
+"""
 class PairRep(object):
   def __init__(self, datafileName):
-    self.data = sp.get_joint_set(datafileName)
+    self.data = du.get_joint_set(datafileName)
     self.img2NiceLabels = getImg2NiceLabel(self.data)
 
     pass
@@ -51,7 +37,7 @@ class PairRep(object):
 
     # Get the 
   def getVRSamples(self, outHTML, vr):
-    htmlTable = rp.HtmlTable()
+    htmlTable = ut.HtmlTable()
     for sample in self.samples:
       if list(sample[-1]) == list(vr):
         nicelabel1 = self.img2NiceLabels[sampleImg1(sample)]
