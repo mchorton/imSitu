@@ -16,7 +16,7 @@ def getImg2NiceLabel(dataset):
   img2NiceLabel = {}
   for imgname, labeling in dataset.iteritems():
     verb = labeling["verb"]
-    niceFrames = [{role: rp.decodeNoun(noun) for role, noun in frame.iteritems()} for frame in labeling["frames"]]
+    niceFrames = [{role: du.decodeNoun(noun) for role, noun in frame.iteritems()} for frame in labeling["frames"]]
     img2NiceLabel[imgname] = niceFrames
   return img2NiceLabel
 
@@ -42,7 +42,7 @@ class PairRep(object):
       if list(sample[-1]) == list(vr):
         nicelabel1 = self.img2NiceLabels[sampleImg1(sample)]
         nicelabel2 = self.img2NiceLabels[sampleImg2(sample)]
-        htmlTable.addRowNice(set([rp.getImgUrl(sample[3])]), set([rp.getImgUrl(sample[4])]), "d(%s,%s)=%.4f, role=%s" % (rp.decodeNoun(sample[0]), rp.decodeNoun(sample[1]), sample[2], sample[-1]), str(nicelabel1), str(nicelabel2))
+        htmlTable.addRowNice(set([rp.getImgUrl(sample[3])]), set([rp.getImgUrl(sample[4])]), "d(%s,%s)=%.4f, role=%s" % (du.decodeNoun(sample[0]), du.decodeNoun(sample[1]), sample[2], sample[-1]), str(nicelabel1), str(nicelabel2))
     with open(outHTML, "w") as f:
       f.write(str(htmlTable))
 

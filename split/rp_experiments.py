@@ -1,5 +1,13 @@
-def saveAllDistances(data, vrProbs, outdir):
+import role_probabilities as rp
+import data_utils as du
+import collections
+import cPickle
+import multiprocessing
+import os
+
+def saveAllDistances(data, vrProbs, outdir, nProc=None):
   v2r = du.getv2r(data)
+
   for i, (verb,roles) in enumerate(v2r.iteritems()):
     print "Considering verb %d/%d" % ((i + 1), len(v2r))
     outfile = "%s%s.pik" % (outdir, verb)
@@ -18,25 +26,12 @@ def generateAllDistVecStyle(loc):
 
   vrn2Imgs = du.getvrn2Imgs(data)
 
-  weights = {}
-  weights[1] = collections.defaultdict(float)
-  weights[1][1] = 1 # Whatever...
-  weights[2] = collections.defaultdict(float)
-  weights[2][2] = 1.
-  weights[3] = collections.defaultdict(float)
-  weights[3][2] = 1.
-  weights[4] = collections.defaultdict(float)
-  weights[4][2] = 1.
-  weights[5] = collections.defaultdict(float)
-  weights[5][2] = 1.
-  weights[6] = collections.defaultdict(float)
-  weights[6][2] = 1.
-  weights[7] = collections.defaultdict(float)
-  weights[7][2] = 1.
+  print "Getting Wholistic Sim Obj"
+  wsc = rp.WholisticSimCalc(vrn2Imgs)
 
-  myprob = lambda x,y,z: allgramProb(x,y,z,weights) # TODO myprob is not even used!
-  vrProbs = VRProbDispatcher(data, None, myprob, vecDist)
+  vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam()) # TODO want to also save the whole sim calc.
   saveAllDistances(data, vrProbs, loc)
+  cPickle.dump(wsc, open("data/vecStyle/wsc.pik", "w"))
 
 def generateW2VDist(dirName):
   modelFile = "data/word2vec/GoogleNews-vectors-negative300.bin"
@@ -51,7 +46,7 @@ def generateW2VDist(dirName):
   model = w2v.Word2Vec.load_word2vec_format(modelFile, binary=modelFile.endswith(".bin"))
 
   def getSim(vrprob, role, x, y):
-    x,y = map(rp.decodeNoun, (x,y))
+    x,y = map(du.decodeNoun, (x,y))
     if x in model and y in model:
       return model.similarity(x,y)
     print "one of (x,y)=%s,%s not in model" % (str(x), str(y))
@@ -107,7 +102,7 @@ def generateHTMLHelper(similarities, verb, role, vrn2Imgs, outdir):
     nicelabel1 = str(img2NiceLabels[k[3]])
     nicelabel2 = str(img2NiceLabels[k[4]])
     # TODO add the nice labels.
-    htmlTable.addRowNice(img1Urls, img2Urls, "d(%s,%s)=%.4f" % (decodeNoun(k[0]), decodeNoun(k[1]), k[2]), nicelabel1, nicelabel2)
+    htmlTable.addRowNice(img1Urls, img2Urls, "d(%s,%s)=%.4f" % (du.decodeNoun(k[0]), du.decodeNoun(k[1]), k[2]), nicelabel1, nicelabel2)
   with open(outdir + "%s-%s.html" % (verb, role), "w") as f:
     f.write(str(htmlTable))
 
@@ -145,10 +140,10 @@ def generateHTMLForExp(loc):
   similarities = [s for s in similarities if n2Imgs[s[0]] != n2Imgs[s[1]]]
   print "===> TOP 5"
   for n, similarity in enumerate(similarities[:5]):
-    print "--> %d: %s" % (n, map(decodeNoun, similarity))
+    print "--> %d: %s" % (n, map(du.decodeNoun, similarity))
 
   for n, similarity in enumerate(similarities[-5:], start=(len(similarities)-5)):
-    print "--> %d: %s" % (n, map(decodeNoun, similarity))
+    print "--> %d: %s" % (n, map(du.decodeNoun, similarity))
 
   showTopN = 5
   showBotN = 5

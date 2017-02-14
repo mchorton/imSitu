@@ -1,4 +1,5 @@
 import json
+from nltk import wordnet as wn
 import copy
 import collections
 import random
@@ -221,6 +222,17 @@ def getDifferers(datasets):
   print str(differCounts)
   return differCounts
 
+def getn2vr2Imgs(vrn2Imgs):
+  n2vr2Imgs = {}
+  for vrn, imgs in vrn2Imgs.iteritems():
+    v,r,n = vrn
+    if n not in n2vr2Imgs:
+      n2vr2Imgs[n] = {}
+    if (v,r) not in n2vr2Imgs[n]:
+      n2vr2Imgs[n][(v,r)] = set()
+    n2vr2Imgs[n][(v,r)] |= imgs
+  return n2vr2Imgs
+
 def getnn2vr2ndiffs(datasets):
   """
   Determines how many verb-roles differ between each pair of images that
@@ -262,3 +274,95 @@ def decodeNoun(noun):
 
 def decodeNouns(*args):
   return tuple(map(decodeNoun, args))
+
+def get_wn_map():
+  wn_map = {}
+  for s in wn.wordnet.all_synsets():
+    if s.pos() == 'n' :
+      wn_map["n{0:08d}".format(s.offset())] = s;
+  return wn_map
+
+def get_im2vr2bestnoun(dataset):
+  # TODO I'd like to deprecate this, but it's way faster than the data examiner(?)
+  """
+  Dataset: the loaded data.
+  """
+  wn_map = get_wn_map()
+  ret = {}
+  for imgname, labeling in dataset.iteritems():
+    verb = labeling["verb"]
+    vr2nouns = {}
+    for frame in labeling["frames"]:
+      for role, noun in frame.iteritems():
+        vr2nouns[(verb, role)] = vr2nouns.get((verb, role), []) + [noun]
+    for vr, nouns in vr2nouns.iteritems():
+      noun = get_best_noun(nouns, wn_map)
+      vr2nouns[vr] = noun
+    ret[imgname] = vr2nouns
+  return ret
+
+def get_best_noun(nouns, wn_map):
+  bestnoun = None
+  def getDists(n, nouns):
+    nSyn = wn_map[n]
+    totDist = 0
+    for myn in nouns:
+      if myn == "":
+        continue
+      totDist += nSyn.shortest_path_distance(wn_map[myn])
+    return totDist
+
+  if len(set(nouns)) != len(nouns):
+    # There's a repeated element. Find it, and choose it.
+    seen = set()
+    for n in nouns:
+      if n in seen:
+        bestnoun = n
+        break
+      seen.add(n)
+    if bestnoun is None:
+      print "Invalid state!"
+      exit(1)
+  else:
+    # There's no repeated element.
+    d = {}
+    for n in nouns:
+      if n == "":
+        continue
+      d[n] = getDists(n, nouns)
+    bestnoun = min(d, key=lambda key: d[key])
+  if bestnoun is None:
+    print "ERROR: bestnoun is None!"
+    exit(1)
+  return bestnoun
+
+class DataExaminer(object):
+  """
+  Class used to preprocess the data and store useful information.
+  """
+  def __init__(self):
+    pass
+  def analyze(self, dataset):
+    self.wn_map = get_wn_map()
+    self.im2vr2nouns = get_im2vr2nouns(dataset)
+  def getBestNoun(self, image, vr):
+    return get_best_noun(self.getNouns(image, vr), self.wn_map)
+  def getNouns(self, image, vr):
+    return self.im2vr2nouns[image][vr]
+
+def get_im2vr2nouns(dataset):
+  """
+  Dataset: the loaded data.
+  """
+  wn_map = get_wn_map()
+  ret = {}
+  for imgname, labeling in dataset.iteritems():
+    verb = labeling["verb"]
+    vr2nouns = {}
+    for frame in labeling["frames"]:
+      for role, noun in frame.iteritems():
+        vr2nouns[(verb, role)] = vr2nouns.get((verb, role), []) + [noun]
+    ret[imgname] = vr2nouns
+  return ret
+
+

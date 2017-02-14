@@ -7,6 +7,8 @@ import os
 import numpy
 import cPickle
 import utils as ut
+import itertools as it
+import copy
 
 def threegramProb(key, givenIndex, wildcardCounts):
   #exit(1) # TODO deprecated.
@@ -188,7 +190,7 @@ def runGetSimilarities():
   nouns = getAllNounsForVR("riding", "vehicle", data)
 
   similarities = getSimilarities("riding", "vehicle", nouns, vrProbs)
-  desired = [(decodeNoun(k[0]), decodeNoun(k[1]), v) for k,v in similarities.iteritems()]
+  desired = [(du.decodeNoun(k[0]), du.decodeNoun(k[1]), v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
   return desired
 
@@ -220,6 +222,37 @@ def vecDist(vrProb, role, noun1, noun2):
       noun2Prob.append(1. * num2 / den2)
   return numpy.linalg.norm(numpy.array(noun1Prob) - numpy.array(noun2Prob))
 
+class WholisticSimCalc(object):
+  def __init__(self, vrn2Imgs):
+    self.vrn2Imgs = vrn2Imgs
+    self.n2vr2Imgs = du.getn2vr2Imgs(self.vrn2Imgs)
+    # Precache some oft-needed objects.
+    self.n2ImgSet = { n: set((img for imgs in vr2Imgs.itervalues() for img in imgs)) for n, vr2Imgs in self.n2vr2Imgs.iteritems()}
+    self.n2vrSet = { n: set(vr2Imgs.keys()) for n, vr2Imgs in self.n2vr2Imgs.iteritems()}
+
+    # Make a structure to cache similarity computations.
+    self.simDbg = {}
+
+  def wholisticSimilarity(self, vrProb, role, noun1, noun2):
+    vsim = math.exp(-vecDist(vrProb, role, noun1, noun2))
+
+    # Get similarity across roles.
+    n1roleSet = self.n2vrSet[noun1]
+    n2roleSet = self.n2vrSet[noun2]
+    arsim = 1. * len(n1roleSet.intersection(n2roleSet)) / len(n1roleSet.union(n2roleSet))
+
+    # Get similarity across the image set.
+    n1Imgs = self.n2ImgSet[noun1]
+    n2Imgs = self.n2ImgSet[noun2]
+    aisim = 1. * len(n1Imgs.intersection(n2Imgs)) / len(n1Imgs.union(n2Imgs))
+
+    ret = -1. * vsim * arsim * aisim
+    self.simDbg[(noun1, noun2)] = {"vsim": vsim, "arsim": arsim, "aisim": aisim, "ret": ret}
+    return ret
+
+  def getWSLam(self):
+    return lambda vrProb, role, noun1, noun2: self.wholisticSimilarity(vrProb, role, noun1, noun2)
+
 def getnn2vr2score(v2r2nn2score):
   ret = {}
   for v,rest1 in v2r2nn2score.iteritems():
@@ -229,3 +262,114 @@ def getnn2vr2score(v2r2nn2score):
           ret[nn] = {}
         ret[nn][(v,r)] = score
   return ret
+
+class SimilaritiesListCalculator(object):
+  def __init__(self, dirName, **kwargs):
+    self.dirName = dirName
+    self.kwargs = kwargs
+    self.simList = None
+  @property
+  def outname(self):
+    return self.dirName + "chosen_pairs_%s.json" % str(sorted(self.kwargs.iteritems()))
+  def getSimilaritiesList(self):
+    if self.simList is None:
+      if os.path.isfile(self.outname):
+        self.simList = json.load(open(self.outname))
+      else: # We have to calculate it, womp womp
+        self.simList = getSimilaritiesList(self.dirName, **self.kwargs)
+        json.dump(self.simList, open(self.outname, "w"))
+    return self.simList
+
+def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
+  """
+  Make HTML that shows one image pair per line, ordered by distance between the
+  images in similarity space.
+  freqthresh: if a noun occurs freqthresh or fewer times, it'll be excluded.
+  blacklistprs: each pair (n1, n2) that matches 
+  """
+  loc = dirName
+  datasets = ["zsTrain.json"]
+  #datasets = ["zsSmall.json"]
+  similarities = cPickle.load(open("%sflat_avg.pik" % loc, "r"))
+  desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
+  desired.sort(key=lambda x: x[2])
+  similarities = desired
+
+  train = du.get_joint_set(datasets)
+  vrn2Imgs = du.getvrn2Imgs(train)
+
+  n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
+
+  #toShow = {} # Map from (n1,n2,sim) -> set([(img1, img2), ...])
+  toShow2 = [] # list like (n1,n2,sim,img1,img2)
+
+  print "Total num sims: %d" % len(similarities)
+
+  imgdeps = du.getImageDeps(vrn2Imgs)
+
+  # Get the number of images in which each noun occurs.
+  freqs = du.getFrequencies(imgdeps)
+
+  # Precache wordnet distances
+  wn_map = du.get_wn_map()
+
+  im2vr2bestnoun = du.get_im2vr2bestnoun(train)
+  examiner = du.DataExaminer()
+  examiner.analyze(train)
+
+  stats = collections.defaultdict(int)
+  nPassSame = 0
+  nPassDiff = 0
+  nNotBestLabel = 0 # This number is meaningless since I didn't check roles before incrementing. Oh well.
+  print "looping..."
+  for n1, n2, sim in similarities:
+    if n1 == "" or n2 == "":
+      continue
+    if set([du.decodeNoun(n1),du.decodeNoun(n2)]) in blacklistprs:
+      continue
+    if freqs[n1] < freqthresh or freqs[n2] < freqthresh:
+      continue
+    for vr, imgs in n2vr2Imgs[n1].iteritems():
+      firstset = imgs
+      secondset = n2vr2Imgs[n2].get(vr, [])
+      for one,two in it.product(firstset, secondset):
+        #bestOneLabel = examiner.getBestNoun(one, vr)
+        #bestTwoLabel = examiner.getBestNoun(two, vr)
+        bestOneLabel = im2vr2bestnoun[one][vr]
+        bestTwoLabel = im2vr2bestnoun[two][vr]
+        if bestNounOnly and (n1 != bestOneLabel or n2 != bestTwoLabel):
+          nNotBestLabel += 1
+          continue
+        if noThreeLabel and (len(set(examiner.getNouns(one, vr))) == 3 or len(set(examiner.getNouns(two, vr))) == 3):
+          stats["n3lab"] += 1
+          continue
+        dl = imgdeps[one].differentLabelings(imgdeps[two])
+        if len(dl) == 1:
+          if dl[0] == vr:
+            nPassSame += 1
+            toShow2.append([n1, n2, sim, one, two, tuple(vr)])
+          else:
+            nPassDiff += 1
+  
+  print "nPassSame=%s" % str(nPassSame)
+  print "nPassDiff=%s" % str(nPassDiff)
+  print "nNotBestLabel=%s" % str(nNotBestLabel)
+  print "stats=%s" % str(stats)
+
+  print "There are %d valid pairs" % len(toShow2)
+  toShow2 = [t for t in toShow2 if t[2] < thresh] # TODO don't do this filtering yet! Just save them all
+  print "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2))
+  print "Expanding (n1, n2) => (n1, n2), (n2, n1)"
+  nextShow = []
+  # Generate reverse pairs.
+  for elem in toShow2:
+    nextShow.append(elem)
+    newelem = copy.deepcopy(elem)
+    newelem[0] = elem[1]
+    newelem[1] = elem[0]
+    newelem[3] = elem[4]
+    newelem[4] = elem[3]
+    nextShow.append(newelem)
+  toShow2 = nextShow
+
+  return toShow2 # Probably should return an object...
