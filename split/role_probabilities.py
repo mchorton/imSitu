@@ -90,12 +90,14 @@ def allgramHellingerDist(vrProb, role, noun1, noun2):
   return math.sqrt(total) / math.sqrt(2)
 
 class VRProb():
-  def __init__(self, pfunc=threegramProb, dfunc = allgramHellingerDist):
+  def __init__(self, verb, pfunc=threegramProb, dfunc = allgramHellingerDist):
     self.counts = None
     self.order = None # This is the order that the counts map's keys are in.
     self.pfunc=pfunc
     self.distFunc = dfunc
-
+    self.verb = verb
+  def getVerb(self):
+    return self.verb
   def normalize(self, frame):
     ret = []
     for o in self.order:
@@ -151,7 +153,7 @@ class VRProbDispatcher():
       if verb not in chosen:
         continue
       if verb not in self.verbVRPMap:
-        self.verbVRPMap[verb] = VRProb(pfunc=self.pfunc, dfunc=self.dfunc)
+        self.verbVRPMap[verb] = VRProb(verb, pfunc=self.pfunc, dfunc=self.dfunc)
       self.verbVRPMap[verb].add(v["frames"])
   def getDistance(self, verb, *args):
     return self.verbVRPMap[verb].getDistance(*args)
@@ -244,10 +246,13 @@ class WholisticSimCalc(object):
     # Get similarity across the image set.
     n1Imgs = self.n2ImgSet[noun1]
     n2Imgs = self.n2ImgSet[noun2]
-    aisim = 1. * len(n1Imgs.intersection(n2Imgs)) / len(n1Imgs.union(n2Imgs))
+    aidif = 1. - (1. * len(n1Imgs.intersection(n2Imgs)) / len(n1Imgs.union(n2Imgs)))
 
-    ret = -1. * vsim * arsim * aisim
-    self.simDbg[(noun1, noun2)] = {"vsim": vsim, "arsim": arsim, "aisim": aisim, "ret": ret}
+    ret = -1. * vsim * arsim * aidif
+    key = (noun1, noun2)
+    if key not in self.simDbg:
+      self.simDbg[key] = []
+    self.simDbg[(noun1, noun2)].append({"vsim": vsim, "arsim": arsim, "aidif": aidif, "ret": ret, "verb": vrProb.getVerb(), "role": role})
     return ret
 
   def getWSLam(self):
@@ -280,25 +285,30 @@ class SimilaritiesListCalculator(object):
         json.dump(self.simList, open(self.outname, "w"))
     return self.simList
 
-def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
+def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
   """
   Make HTML that shows one image pair per line, ordered by distance between the
   images in similarity space.
   freqthresh: if a noun occurs freqthresh or fewer times, it'll be excluded.
   blacklistprs: each pair (n1, n2) that matches 
   """
-  loc = dirName
   datasets = ["zsTrain.json"]
   #datasets = ["zsSmall.json"]
-  similarities = cPickle.load(open("%sflat_avg.pik" % loc, "r"))
+  similarities = cPickle.load(open("%sflat_avg.pik" % dirName, "r"))
   desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
   similarities = desired
 
   train = du.get_joint_set(datasets)
-  vrn2Imgs = du.getvrn2Imgs(train)
 
-  n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
+  cacher = ut.Cacher(dirName)
+  vrn2Imgs = cacher.runMyFile("vrn2Imgs", du.getvrn2Imgs, train)
+  n2vr2Imgs = cacher.runMyFile("getn2vr2Imgs", du.getn2vr2Imgs, vrn2Imgs)
+
+  #vrn2Imgs = du.getvrn2Imgs(train)
+
+  #n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
+  # TODO cache this!
 
   #toShow = {} # Map from (n1,n2,sim) -> set([(img1, img2), ...])
   toShow2 = [] # list like (n1,n2,sim,img1,img2)
@@ -310,9 +320,6 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
   # Get the number of images in which each noun occurs.
   freqs = du.getFrequencies(imgdeps)
 
-  # Precache wordnet distances
-  wn_map = du.get_wn_map()
-
   im2vr2bestnoun = du.get_im2vr2bestnoun(train)
   examiner = du.DataExaminer()
   examiner.analyze(train)
@@ -322,12 +329,17 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
   nPassDiff = 0
   nNotBestLabel = 0 # This number is meaningless since I didn't check roles before incrementing. Oh well.
   print "looping..."
-  for n1, n2, sim in similarities:
+  for i, (n1, n2, sim) in enumerate(similarities):
+    #print "i=%d" % i
+    if i % (len(similarities) / 100) == 0:
+      print "--> %d %% done." % (int((100 * i) // len(similarities)))
     if n1 == "" or n2 == "":
       continue
     if set([du.decodeNoun(n1),du.decodeNoun(n2)]) in blacklistprs:
       continue
     if freqs[n1] < freqthresh or freqs[n2] < freqthresh:
+      continue
+    if noOnlyOneRole and (len(n2vr2Imgs[n1]) <= 1 or len(n2vr2Imgs[n2]) <= 1):
       continue
     for vr, imgs in n2vr2Imgs[n1].iteritems():
       firstset = imgs
@@ -343,7 +355,7 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
         if noThreeLabel and (len(set(examiner.getNouns(one, vr))) == 3 or len(set(examiner.getNouns(two, vr))) == 3):
           stats["n3lab"] += 1
           continue
-        dl = imgdeps[one].differentLabelings(imgdeps[two])
+        dl = imgdeps[one].differentLabelings(imgdeps[two], strictImgSep, examiner)
         if len(dl) == 1:
           if dl[0] == vr:
             nPassSame += 1

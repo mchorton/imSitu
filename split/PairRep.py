@@ -22,20 +22,16 @@ def getImg2NiceLabel(dataset):
 
 """
 Representation of a set of image pairs. E.g., 
-(noun1, noun2, similarities, img1name, img2name, vr) # TODO you also want the role in which the verbs differ.
+(noun1, noun2, similarities, img1name, img2name, vr)
 """
 class PairRep(object):
   def __init__(self, datafileName):
     self.data = du.get_joint_set(datafileName)
     self.img2NiceLabels = getImg2NiceLabel(self.data)
-
-    pass
   def load(self, filename):
     # We assume these are already sorted by similarities. It only really matters
     # for cosmetic reasons.
     self.samples = json.load(open(filename))
-
-    # Get the 
   def getVRSamples(self, outHTML, vr):
     htmlTable = ut.HtmlTable()
     for sample in self.samples:

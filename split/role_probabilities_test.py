@@ -1,7 +1,9 @@
 import role_probabilities as rp
+import data_utils as du
 import collections
 import unittest
 import math
+
 
 class TestRP(unittest.TestCase):
   @classmethod
@@ -9,7 +11,7 @@ class TestRP(unittest.TestCase):
     pass
   def test_vrp(self):
     frames = [{"role1": "noun1", "role2": "noun2"}, {"role1": "noun1", "role2": "noun2b"}]
-    vrp = rp.VRProb()
+    vrp = rp.VRProb("verbname")
     vrp.add(frames)
 
     self.assertEqual(("role1", "role2"), vrp.order)
@@ -26,7 +28,7 @@ class TestRP(unittest.TestCase):
         {"role1": "noun1", "role2": "noun2"},
         {"role1": "noun1b", "role2": "noun2b"}
         ]
-    vrp = rp.VRProb()
+    vrp = rp.VRProb("verbname")
     vrp.add(frames)
 
     dist = vrp.getDistance("role1", "noun1", "noun1b")
@@ -74,3 +76,16 @@ class TestRP(unittest.TestCase):
     prob = allgramProb(("1", "2"), 0, wilcardCounts, weights)
     self.assertEqual(0.3 + 0.5 * 0.7, prob)
   """
+  def test_WSC(self):
+    data = du.get_joint_set("testfunc.json")
+    vrn2Imgs = du.getvrn2Imgs(data)
+    wsc = rp.WholisticSimCalc(vrn2Imgs)
+
+    vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam()) # TODO want to also save the whole sim calc.
+    d = vrProbs.getAllSimilarities("verb1", "place")
+
+    expDbg = {(u'p1', u'p1'): {'aisim': 1.0, 'arsim': 1.0, 'ret': -1.0, 'vsim': 1.0}}
+    expD = {(u'p1', u'p1'): -1.0}
+
+    self.assertEqual(expD, d)
+    self.assertEqual(expDbg, wsc.simDbg)

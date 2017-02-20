@@ -42,20 +42,22 @@ class ImgDep():
         minlen = len(curset)
     return minset
 
-  def differentLabelings(self, otherImgDep):
+  def differentLabelings(self, otherImgDep, strictImgSep = False, examiner = None):
     """
     Find the roles over which these differ.
-    Return as a list: [(verb, role1), (verb, role2), ...]
+    Return as a list: [role1, role2, ... ]
     """
     diffRoles = []
     if self.verb is None or self.verb != otherImgDep.verb:
       return None
     numDifferences = 0
     for k,v in self.role2Nouns.iteritems():
-      if len(otherImgDep.role2Nouns[k] & v) == 0:
+      if strictImgSep:
+        if examiner.getBestNoun(self.name, k) != examiner.getBestNoun(otherImgDep.name, k):
+          diffRoles.append(k)
+      elif len(otherImgDep.role2Nouns[k] & v) == 0:
         diffRoles.append(k)
     return diffRoles
-
   def numDifferentLabelings(self, otherImgDep):
     ret = self.differentLabelings(otherImgDep)
     if ret is None:
@@ -345,8 +347,10 @@ class DataExaminer(object):
   def analyze(self, dataset):
     self.wn_map = get_wn_map()
     self.im2vr2nouns = get_im2vr2nouns(dataset)
+    self.im2vr2bestnoun = get_im2vr2bestnoun(dataset)
   def getBestNoun(self, image, vr):
-    return get_best_noun(self.getNouns(image, vr), self.wn_map)
+    return self.im2vr2bestnoun[image][vr]
+    #return get_best_noun(self.getNouns(image, vr), self.wn_map)
   def getNouns(self, image, vr):
     return self.im2vr2nouns[image][vr]
 

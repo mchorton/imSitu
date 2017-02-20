@@ -1,3 +1,12 @@
+import utils as ut
+import cPickle
+import gensim.models.word2vec as w2v
+import itertools as it
+import json
+import copy
+import PairRep as pr
+import utils as ut
+import numpy as np
 import role_probabilities as rp
 import data_utils as du
 import collections
@@ -5,8 +14,12 @@ import cPickle
 import multiprocessing
 import os
 
+vecStyleDirectory = "data/vecStyle"
+
 def saveAllDistances(data, vrProbs, outdir, nProc=None):
   v2r = du.getv2r(data)
+
+  needUpdate = False
 
   for i, (verb,roles) in enumerate(v2r.iteritems()):
     print "Considering verb %d/%d" % ((i + 1), len(v2r))
@@ -14,11 +27,13 @@ def saveAllDistances(data, vrProbs, outdir, nProc=None):
     if os.path.isfile(outfile):
       print "...Found precached results for verb '%s'" % (verb)
       continue
+    needUpdate = True
     print "...Computing all distances for verb '%s'..." % verb
     vrn2dist = {role: vrProbs.getAllSimilarities(verb, role) for role in roles}
     print "...Saving distances for verb '%s' to '%s'..." % (verb, outfile)
     cPickle.dump(vrn2dist, open(outfile, "w"))
     print "...done."
+  return needUpdate
 
 def generateAllDistVecStyle(loc):
   dataset = ["zsTrain.json"]
@@ -30,8 +45,11 @@ def generateAllDistVecStyle(loc):
   wsc = rp.WholisticSimCalc(vrn2Imgs)
 
   vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam()) # TODO want to also save the whole sim calc.
-  saveAllDistances(data, vrProbs, loc)
-  cPickle.dump(wsc, open("data/vecStyle/wsc.pik", "w"))
+  needUpdate = saveAllDistances(data, vrProbs, loc)
+  # TODO this object doesn't have anything in it.
+  # Maybe the lambda is shielding it? But I doubt that.
+  if needUpdate:
+    cPickle.dump(wsc, open("data/vecStyle/wsc.pik", "w"))
 
 def generateW2VDist(dirName):
   modelFile = "data/word2vec/GoogleNews-vectors-negative300.bin"
@@ -55,7 +73,7 @@ def generateW2VDist(dirName):
   print "Getting similarities"
   #getSim = lambda vrprob,role,x,y: model.similarity(x,y)
   vrProbs = rp.VRProbDispatcher(data, dfunc=getSim)
-  rp.saveAllDistances(data, vrProbs, dirName)
+  saveAllDistances(data, vrProbs, dirName)
 
 def getAveragedRankings(directory):
   dataset = ["zsTrain.json"]
@@ -68,7 +86,7 @@ def getAveragedRankings(directory):
   print "...done loading data"
 
   print "getting nn2vr2score"
-  nn2vr2score = getnn2vr2score(v2r2nn2score)
+  nn2vr2score = rp.getnn2vr2score(v2r2nn2score)
   cPickle.dump(nn2vr2score, open("%s%s.pik" % (directory, "nn2vr2score"), "w"))
   print "...done"
 
@@ -79,92 +97,62 @@ def getAveragedRankings(directory):
     print stuff
     if n > 5:
       break
-  flatAvg = {nn: numpy.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()} # Flat average, doesn't care about # of images.
+  flatAvg = {nn: np.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()} # Flat average, doesn't care about # of images.
   print "...done"
 
   outname = "%s%s.pik" % (directory, "flat_avg")
   print "saving flat averages to %s" % outname
   cPickle.dump(flatAvg, open(outname, "w"))
 
-def generateHTMLHelper(similarities, verb, role, vrn2Imgs, outdir):
-  """
-  similarities - a list like [(noun1, noun2, similarity_score as a float), (...), ...]
-  """
+def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
+  train = du.get_joint_set("zsTrain.json")
+
+  cacher = ut.Cacher(dirName)
+  print "Loading similarities..."
+
+  suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "midwb", str(measureImgDistWithBest))
+  simName = dirName + "chosen_pairs_%s.json" % (suffix)
+
+  #calculator = rp.SimilaritiesListCalculator(dirName, thresh=thresh, freqthresh=freqthresh, blacklistprs=blacklistprs, bestNounOnly=bestNounOnly, noThreeLabel=noThreeLabel)
+
+  toShow = cacher.run(rp.getSimilaritiesList, dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel)
+  #toShow = calculator.getSimilaritiesList()
+  #toShow = rp.getSimilaritiesList(dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel)
+
+  print "There are now %d valid pairs" % len(toShow)
+  #json.dump(toShow, open(dirName + "chosen_pairs_%s.json" % (suffix), "w"))
+
+  subsampleFactor = 1000
+  print "Subsampling similarities by %d" % subsampleFactor
+  stride = len(toShow) / subsampleFactor
+  cont = toShow[:20]
+  if stride > 0:
+    toShow = cont + toShow[::stride]
+
+  # TODO rest of this should be a separate function
+  img2NiceLabels = pr.getImg2NiceLabel(train)
+
+  # Load the wsc if needed
+  wsc = None
+  if includeWSC:
+    wsc = cPickle.load(open(dirName + "wsc.pik"))
+
+  # get a table
   htmlTable = ut.HtmlTable()
-  dataset = sp.get_joint_dataset("zsTrain.json") # TODO a tad hacky.
-  img2NiceLabel = getImg2NiceLabel(dataset)
+  for n1, n2, sim, one, two, vr in toShow:
+    nicelabel1 = str(img2NiceLabels[one])
+    nicelabel2 = str(img2NiceLabels[two])
+    img1urls = set([ut.getImgUrl(one)])
+    img2urls = set([ut.getImgUrl(two)])
+    dbg = ""
+    if wsc:
+      dbg = str(wsc.simDbg.get((n1, n2), ""))
+      if dbg == "":
+        dbg = str(wsc.simDbg.get((n2, n1), ""))
+    if len(dbg) > maxDbgLen:
+      msg = "... etc. (truncating examples due to length)"
+      dbg = dbg[:maxDbgLen-len(msg)] + msg
+    htmlTable.addRowNice(img1urls, img2urls, "d(%s,%s)=%.4f, imgs=(%s, %s, %s)" % (du.decodeNoun(n1), du.decodeNoun(n2), sim, one, two, str(vr)), nicelabel1, nicelabel2, dbg)
 
-  for k in similarities:
-    img1Urls = getImgUrls(getNounImgs(verb, role, k[0], vrn2Imgs))
-    img2Urls = getImgUrls(getNounImgs(verb, role, k[1], vrn2Imgs))
-    if img1Urls == img2Urls or 0 in map(len, (img1Urls, img2Urls)):
-      continue
-    nicelabel1 = str(img2NiceLabels[k[3]])
-    nicelabel2 = str(img2NiceLabels[k[4]])
-    # TODO add the nice labels.
-    htmlTable.addRowNice(img1Urls, img2Urls, "d(%s,%s)=%.4f" % (du.decodeNoun(k[0]), du.decodeNoun(k[1]), k[2]), nicelabel1, nicelabel2)
-  with open(outdir + "%s-%s.html" % (verb, role), "w") as f:
+  with open(dirName + "all_sim_prs_%s.html" % (suffix), "w") as f:
     f.write(str(htmlTable))
-
-def generateHTMLForExp(loc):
-  """
-  TODO: Look at the top 5 and bottom 5 scoring classes. Print a few roles in which they're involved.
-  For now, let's just choose some.
-  """
-  chosen = [("riding", "vehicle"), ("crawling", "agent"), ("distracting", "place"), ("jumping", "obstacle"), ("jumping", "agent"), ("jumping", "destination")]
-
-  similarities = cPickle.load(open("%sflat_avg.pik" % loc, "r"))
-  desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
-  desired.sort(key=lambda x: x[2])
-  similarities = desired
-
-  dataset = ["zsTrain.json"]
-  data = du.get_joint_set(dataset)
-
-  vrn2Imgs = du.getvrn2Imgs(data) # TODO just save this.
-
-
-  nn2vr2score = cPickle.load(open("%s%s.pik" % (loc, "nn2vr2score"), "r"))
-
-  # Get a lookup set from noun to images for that noun
-  n2Imgs = {}
-  for vrn, images in vrn2Imgs.iteritems():
-    noun = vrn[2]
-    if vrn not in n2Imgs:
-      n2Imgs[noun] = set()
-    n2Imgs[noun] |= images
-
-  # Get a sorted list of the similarities, excluding duplicates
-  similarities = [s for s in similarities if s[0] < s[1]]
-  # remove all noun pairs that have the same images
-  similarities = [s for s in similarities if n2Imgs[s[0]] != n2Imgs[s[1]]]
-  print "===> TOP 5"
-  for n, similarity in enumerate(similarities[:5]):
-    print "--> %d: %s" % (n, map(du.decodeNoun, similarity))
-
-  for n, similarity in enumerate(similarities[-5:], start=(len(similarities)-5)):
-    print "--> %d: %s" % (n, map(du.decodeNoun, similarity))
-
-  showTopN = 5
-  showBotN = 5
-
-  print "nn2vrkeys: %s" % nn2vr2score.keys()[:5]
-
-  #goodToShow = set([verbrole for verbrole in vr.keys() for nn, vr in nn2vr2score.iteritems() if nn in map(lambda x: (x[0],x[1]), similarities[:5])])
-  #badToShow = set([verbrole for verbrole in vr.keys() for nn, vr in nn2vr2score.iteritems() if nn in map(lambda x: (x[0],x[1]), similarities[-5:])])
-  goodToShow = set()
-  badToShow = set()
-
-  for nn, vr in nn2vr2score.iteritems():
-    if nn in map(lambda x: (x[0], x[1]), similarities[:5]):
-      goodToShow |= set(vr.keys())
-    if nn in map(lambda x: (x[0], x[1]), similarities[-5:]):
-      badToShow |= set(vr.keys())
-
-  print "Good Examples: %s" % goodToShow
-  print "Bad Examples: %s" % badToShow
-  toShow = goodToShow | badToShow
-
-  for verb, role in toShow:
-    print "Generating html for %s-%s" % (verb, role)
-    generateHTMLHelper(similarities, verb, role, vrn2Imgs, loc)

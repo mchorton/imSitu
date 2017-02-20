@@ -1,5 +1,8 @@
 import operator as op
 import itertools
+import os
+import cPickle
+import random
 
 class HtmlTable():
   def __init__(self):
@@ -67,3 +70,66 @@ def powerset(iterable):
     "powerset([1,2,3]) --> () (1,) (2,) (3,) (1,2) (1,3) (2,3) (1,2,3)"
     s = list(iterable)
     return itertools.chain.from_iterable(itertools.combinations(s, r) for r in range(len(s)+1))
+
+def slugify(value):
+    # TODO not the right choice here.
+    """
+    Normalizes string, converts to lowercase, removes non-alpha characters,
+    and converts spaces to hyphens.
+    """
+    import unicodedata
+    import re
+    value = unicodedata.normalize('NFKD', unicode(value)).encode('ascii', 'ignore')
+    value = unicode(re.sub('[^\w\s-]', '', value).strip().lower())
+    value = unicode(re.sub('[-\s]+', '-', value))
+    return value
+
+class Cacher(object):
+  def __init__(self, directory, serializer = cPickle.dump, deserializer = cPickle.load, cacheSize = 50):
+    self.directory = os.path.dirname(directory)
+    if not os.path.isdir(self.directory):
+      raise FileNotFoundError
+    self.serializer = serializer
+    self.deserializer = deserializer
+    self.cacheSize = cacheSize
+    self.cache = {}
+  def _addToCache(self, key, obj):
+    if len(self.cache) >= self.cacheSize:
+      # Evict one at random. #TODO #Lazy
+      self.cache.pop(self.cache.keys()[random.randint(0, 9)])
+    self.cache[key] = obj
+  def getFilename(self, func, *args, **kwargs):
+    return os.path.join(self.directory, slugify("%s_args=%s_kwargs=%s" % (func.__name__, str(args), str(sorted(kwargs.iteritems())))))
+  def runMyKey(self, key, func, *args, **kwargs):
+    if len(key) > 512:
+      print "key too long!"
+      exit(1)
+    if key not in self.cache:
+      # load from disk, or compute
+      if os.path.isfile(key):
+        obj = self.deserializer(open(key))
+      else:
+        print "Can't find key file %s" % str(key)
+        obj = func(*args, **kwargs)
+        self.serializer(obj, open(key, "w+"))
+        if os.path.isfile(key):
+          print "made file %s" % str(key)
+        else:
+          print "failed to make file %s" % str(key)
+      self._addToCache(key, obj)
+    return self.load(key)
+  def runMyFile(self, filename, func, *args, **kwargs):
+    return self.runMyKey(os.path.join(self.directory, filename), func, *args, **kwargs)
+  def run(self, func, *args, **kwargs):
+    key = self.getFilename(func, *args, **kwargs)
+    return self.runMyKey(key, func, *args, **kwargs)
+  def store(key, obj):
+    if len(key) > 512:
+      print "key too long!"
+      exit(1)
+    self.serializer(obj, open(key, "w+"))
+    self._addToCache(key, obj)
+  def load(self, key):
+    if key not in self.cache and os.path.isfile(key):
+      self._addToCache(key, self.deserializer(open(key)))
+    return self.cache[key]
