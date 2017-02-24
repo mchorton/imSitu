@@ -286,7 +286,10 @@ class SimilaritiesListCalculator(object):
     return self.simList
 
 def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
+  # toShow2.append([n1, n2, sim, one, two, tuple(vr)])
   """
+  Get output like:
+  [[noun1, noun2, similarity, img1, img2, tuple(verb, role)], ...]
   Make HTML that shows one image pair per line, ordered by distance between the
   images in similarity space.
   freqthresh: if a noun occurs freqthresh or fewer times, it'll be excluded.

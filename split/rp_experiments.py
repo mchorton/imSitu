@@ -104,18 +104,19 @@ def getAveragedRankings(directory):
   print "saving flat averages to %s" % outname
   cPickle.dump(flatAvg, open(outname, "w"))
 
-def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
+def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnylOneRole = True, strictImgSep=True, maxDbgLen = 1000):
   train = du.get_joint_set("zsTrain.json")
 
   cacher = ut.Cacher(dirName)
   print "Loading similarities..."
 
-  suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "midwb", str(measureImgDistWithBest))
+  suffix = "%s__%s__%s__%s__%s__%s__%s" % (str(thresh), str(freqthresh), str(bestNounOnly), str(blacklistprs), str(noThreeLabel), str(strictImgSep), str(noOnlyOneRole))
+  #suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "strictImgSep", str(strictImgSep), "noOnlyOneRole", str(noOnlyOneRole))
   simName = dirName + "chosen_pairs_%s.json" % (suffix)
 
   #calculator = rp.SimilaritiesListCalculator(dirName, thresh=thresh, freqthresh=freqthresh, blacklistprs=blacklistprs, bestNounOnly=bestNounOnly, noThreeLabel=noThreeLabel)
 
-  toShow = cacher.run(rp.getSimilaritiesList, dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel)
+  toShow = cacher.run(rp.getSimilaritiesList, dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
   #toShow = calculator.getSimilaritiesList()
   #toShow = rp.getSimilaritiesList(dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel)
 
@@ -156,3 +157,38 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
 
   with open(dirName + "all_sim_prs_%s.html" % (suffix), "w") as f:
     f.write(str(htmlTable))
+
+#def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
+
+def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, maxDbgLen = 1000):
+
+  # gets a json object describing image pairs.
+  # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
+
+  cacher = ut.Cacher(dirName)
+  toShow = cacher.run(rp.getSimilaritiesList, dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
+
+  # Need a DataExaminer to get the canonical representation for an image.
+  dataset = du.get_joint_set("zsTrain.json")
+  examiner = du.DataExaminer()
+  examiner.analyze(dataset)
+
+  def stringifyKeys(obj):
+    # return a copy of obj except the keys are lists instead of 
+    return {str(k): v for k,v in obj.iteritems()}
+
+  def decodeVals(obj):
+    return {k: du.decodeNoun(v) for k,v in obj.iteritems()}
+
+  myobj = []
+  for stuff in toShow:
+    myobj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), stuff[0], stuff[1], stringifyKeys(examiner.getCanonicalLabels(stuff[3])), stringifyKeys(examiner.getCanonicalLabels(stuff[4]))])
+
+  myDecodedObj = []
+  for stuff in toShow:
+    myDecodedObj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), du.decodeNoun(stuff[0]), du.decodeNoun(stuff[1]), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[3]))), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[4])))])
+  #suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "strictImgSep", str(strictImgSep), "noOnlyOneRole", str(noOnlyOneRole))
+  suffix = "%s__%s__%s__%s__%s__%s__%s" % (str(thresh), str(freqthresh), str(bestNounOnly), str(blacklistprs), str(noThreeLabel), str(strictImgSep), str(noOnlyOneRole))
+  #return myobj, myDecodedObj
+  json.dump(myobj, open(dirName + "json_summary_%s.json" % str(suffix), "w+"))
+  json.dump(myDecodedObj, open(dirName + "json_summary_decoded_%s.json" % str(suffix), "w+"))

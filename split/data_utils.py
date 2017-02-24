@@ -353,6 +353,8 @@ class DataExaminer(object):
     #return get_best_noun(self.getNouns(image, vr), self.wn_map)
   def getNouns(self, image, vr):
     return self.im2vr2nouns[image][vr]
+  def getCanonicalLabels(self, img):
+    return self.im2vr2bestnoun[img]
 
 def get_im2vr2nouns(dataset):
   """
