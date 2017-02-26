@@ -19,17 +19,27 @@ TORCHCOMPDEVDATA = "data/pairLearn/compdev.pyt"
 TORCHREGTRAINDATA = "data/pairLearn/regtrain.pyt"
 TORCHREGDEVDATA = "data/pairLearn/regdev.pyt"
 
+TORCHCOMPTRAINDATATEST = "data/pairLearn/comptrain_test.pyt"
+TORCHCOMPDEVDATATEST = "data/pairLearn/compdev_test.pyt"
+TORCHREGTRAINDATATEST = "data/pairLearn/regtrain_test.pyt"
+TORCHREGDEVDATATEST = "data/pairLearn/regdev_test.pyt"
+
 VRNDATATEST = "data/pairLearn/vrn_test.json"
 VRNDATA = "data/pairLearn/vrn.json"
 COMPFEATDIR = "data/comp_fc7/"
 REGFEATDIR = "data/regression_fc7/"
 
 class ImTransNet(nn.Module):
-    def __init__(self, nInput, nHidden, nOutput):
+    def __init__(self, imFeatures, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
         super(ImTransNet, self).__init__()
 
+        nInput = imFeatures + 2 * WESize + vrESize
         self.hidden = nn.Linear(nInput, nHidden)
         self.output = nn.Linear(nHidden, nOutput) # TODO can I do this at "forward()" time?
+        self.wordEmbedding = nn.Embedding(nWords, WESize)
+        self.vrEmbedding = nn.Embedding(nVRs, vrESize)
+        print "WESize: %d" % WESize
+        print "vrESize: %d" % vrESize
         """
         self.conv1 = nn.Conv2d(1, 6, 5) # 1 input image channel, 6 output channels, 5x5 square convolution kernel
         self.conv2 = nn.Conv2d(6, 16, 5)
@@ -39,9 +49,35 @@ class ImTransNet(nn.Module):
         """
 
     def forward(self, x):
+        """
+        x looks like [role, noun1, noun2, features...]
+        """
+        # TODO get the embedding vector.
+        # TODO this will be slow!
+        roles = x[:,0]
+        #print "shape of roles: %s" % str(roles.size())
+        #print "roles is: %s" % str(roles)
+        roleEmbeddings = self.vrEmbedding(roles.long()) # This is now [batchDim][1][embedding size]
+        #print "shape of roleEmbeddings: %s" % str(roleEmbeddings.size())
+        roleEmbeddings = roleEmbeddings.view(len(x), -1)
+        #print "after reshape , shape of roleEmbeddings: %s" % str(roleEmbeddings.size())
+
+        words = x[:,1:3]
+        #print "shape of words: %s" % str(words.size())
+        wordEmbeddings = self.wordEmbedding(words.long()) # This is now [batchDim][1][embedding size]
+        #print "shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
+        wordEmbeddings = wordEmbeddings.view(len(x), -1)
+        #print "after reshape , shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
+
+        x = torch.cat([roleEmbeddings, wordEmbeddings, x[:,3:]], 1)
+        #print "final x.shape: %s" % str(x.size())
+
         x = F.relu(self.hidden(x))
         x = self.output(x)
         return x
+
+        #exit(1)
+
         """
         x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2)) # Max pooling over a (2, 2) window
         x = F.max_pool2d(F.relu(self.conv2(x)), 2) # If the size is a square you can only specify a single number
@@ -70,8 +106,16 @@ def makeAllData():
   global TORCHREGDEVDATA
   global REGFEATDIR
   global VRNDATA
-  makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
-  makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
+  global VRNDATATEST
+  global TORCHCOMPTRAINDATATEST
+  global TORCHCOMPDEVDATATEST
+  global TORCHREGTRAINDATATEST
+  global TORCHREGDEVDATATEST
+
+  #makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
+  #makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
+  makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
+  makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile):
   vrnData = json.load(open(vrndatafile))
@@ -87,10 +131,19 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   # TODO need to convert some of these to numbers.
   rolesAsTuples = set([tuple(e) for e in tRoles])
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
-  def nounToInt(noun):
-    return int(noun[1:])
+  #def nounToInt(noun):
+  #  return int(noun[1:])
+  allNounsUsed = set(n1s)
+  noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
+
+  torch.save(role2Int, "%s_role2Int" % trainLoc)
+  torch.save(noun2Int, "%s_noun2Int" % trainLoc)
+
+  print "role2Int size: %d" % len(role2Int)
+  print "noun2Int size: %d" % len(noun2Int)
 
   imToFeatures = { name: np.fromfile("%s%s" % (featDir, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
+  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
 
   # Choose which images are part of train, and which are part of dev
   allNames = list(set(im1Names))
@@ -108,7 +161,7 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   ydev = []
   wasted = 0
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
-    x = [role2Int[tuple(tRole)]] + [nounToInt(noun1)] + [nounToInt(noun2)] + list(imToFeatures[im1Name])
+    x = [role2Int[tuple(tRole)]] + [noun2Int[noun1]] + [noun2Int[noun2]] + list(imToFeatures[im1Name])
     y = list(imToFeatures[im2Name])
     if im1Name in trainIm and im2Name in trainIm:
       xtrain.append(x)
@@ -125,16 +178,21 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   trainData = td.TensorDataset(torch.Tensor(xtrain), torch.Tensor(ytrain))
   devData = td.TensorDataset(torch.Tensor(xdev), torch.Tensor(ydev))
 
+  print "Saving train data to %s" % trainLoc
   torch.save(trainData, trainLoc)
+  print "Saving dev data to %s" % devLoc
   torch.save(devData, devLoc)
 
 # TODO get this to run on the GPU
 def runModel(modelName, lr=0.0001):
   # Get the data
-  train = torch.load(TORCHCOMPTRAINDATA)
+  trainLoc = TORCHCOMPTRAINDATATEST
+  devLoc = TORCHCOMPDEVDATATEST
+
+  train = torch.load(trainLoc)
   trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=2)
 
-  dev = torch.load(TORCHCOMPDEVDATA)
+  dev = torch.load(devLoc)
   devloader = td.DataLoader(dev, batch_size=128, shuffle=True, num_workers=2)
 
   npts = len(train)
@@ -150,7 +208,18 @@ def runModel(modelName, lr=0.0001):
   printPer = 1
 
   # TODO add in the nouns, and the role. Get proper data.
-  net = ImTransNet(indim, nHidden, outdim)
+  #def __init__(self, nInput, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
+
+  role2Int = torch.load("%s_role2Int" % trainLoc)
+  noun2Int = torch.load("%s_noun2Int" % trainLoc)
+
+  nVRs = max(role2Int.values()) + 1
+  nWords = max(noun2Int.values()) + 1
+  WESize = int(nWords / 10)
+  vrESize = int(nVRs / 10)
+  print "nVRs: %d" % nVRs
+  print "nWords: %d" % nWords
+  net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize)
 
   # TODO make a custom loss.
   criterion = nn.MSELoss()
