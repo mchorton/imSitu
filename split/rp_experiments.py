@@ -75,35 +75,6 @@ def generateW2VDist(dirName):
   vrProbs = rp.VRProbDispatcher(data, dfunc=getSim)
   saveAllDistances(data, vrProbs, dirName)
 
-def getAveragedRankings(directory):
-  dataset = ["zsTrain.json"]
-  data = du.get_joint_set(dataset)
-  v2r = du.getv2r(data)
-  # 
-  v2r2nn2score = {}
-  print "loading data..."
-  v2r2nn2score = {verb: cPickle.load(open("%s%s.pik" % (directory, verb), "r")) for verb in v2r}
-  print "...done loading data"
-
-  print "getting nn2vr2score"
-  nn2vr2score = rp.getnn2vr2score(v2r2nn2score)
-  cPickle.dump(nn2vr2score, open("%s%s.pik" % (directory, "nn2vr2score"), "w"))
-  print "...done"
-
-  print "combining..."
-  # Choose how to combine the values.
-  print "sample values:"
-  for n, stuff in enumerate(nn2vr2score.iteritems()):
-    print stuff
-    if n > 5:
-      break
-  flatAvg = {nn: np.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()} # Flat average, doesn't care about # of images.
-  print "...done"
-
-  outname = "%s%s.pik" % (directory, "flat_avg")
-  print "saving flat averages to %s" % outname
-  cPickle.dump(flatAvg, open(outname, "w"))
-
 def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnylOneRole = True, strictImgSep=True, maxDbgLen = 1000):
   train = du.get_joint_set("zsTrain.json")
 
@@ -193,3 +164,7 @@ def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man
   #return myobj, myDecodedObj
   json.dump(myobj, open(dirName + "json_summary_%s.json" % str(suffix), "w+"))
   json.dump(myDecodedObj, open(dirName + "json_summary_decoded_%s.json" % str(suffix), "w+"))
+
+# TODO make the distance metric better.
+def summaryStub():
+  getJsonSummary("data/vecStyle/", thresh=2, freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, maxDbgLen = 1000)

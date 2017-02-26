@@ -4,11 +4,11 @@ import math
 import json
 import itertools
 import os
-import numpy
 import cPickle
 import utils as ut
 import itertools as it
 import copy
+import numpy as np
 
 def threegramProb(key, givenIndex, wildcardCounts):
   #exit(1) # TODO deprecated.
@@ -222,7 +222,7 @@ def vecDist(vrProb, role, noun1, noun2):
       key2[n] = noun
       num2 = vrProb.wildcardCounts[tuple(key2)]
       noun2Prob.append(1. * num2 / den2)
-  return numpy.linalg.norm(numpy.array(noun1Prob) - numpy.array(noun2Prob))
+  return np.linalg.norm(np.array(noun1Prob) - np.array(noun2Prob))
 
 class WholisticSimCalc(object):
   def __init__(self, vrn2Imgs):
@@ -236,6 +236,10 @@ class WholisticSimCalc(object):
     self.simDbg = {}
 
   def wholisticSimilarity(self, vrProb, role, noun1, noun2):
+    """
+    For intermediate metrics, a score of 1 indicates a good pair, a score of
+    0 indicates a poor pair. So, no reason to negate it!
+    """
     vsim = math.exp(-vecDist(vrProb, role, noun1, noun2))
 
     # Get similarity across roles.
@@ -248,7 +252,7 @@ class WholisticSimCalc(object):
     n2Imgs = self.n2ImgSet[noun2]
     aidif = 1. - (1. * len(n1Imgs.intersection(n2Imgs)) / len(n1Imgs.union(n2Imgs)))
 
-    ret = -1. * vsim * arsim * aidif
+    ret = 1. * vsim * arsim * aidif
     key = (noun1, noun2)
     if key not in self.simDbg:
       self.simDbg[key] = []
@@ -285,6 +289,36 @@ class SimilaritiesListCalculator(object):
         json.dump(self.simList, open(self.outname, "w"))
     return self.simList
 
+def getAveragedRankings(directory):
+  dataset = ["zsTrain.json"]
+  data = du.get_joint_set(dataset)
+  v2r = du.getv2r(data)
+  # 
+  v2r2nn2score = {}
+  print "loading data..."
+  v2r2nn2score = {verb: cPickle.load(open("%s%s.pik" % (directory, verb), "r")) for verb in v2r}
+  print "...done loading data"
+
+  print "getting nn2vr2score"
+  nn2vr2score = getnn2vr2score(v2r2nn2score)
+  cPickle.dump(nn2vr2score, open("%s%s.pik" % (directory, "nn2vr2score"), "w"))
+  print "...done"
+
+  print "combining..."
+  # Choose how to combine the values.
+  print "sample values:"
+  for n, stuff in enumerate(nn2vr2score.iteritems()):
+    print stuff
+    if n > 5:
+      break
+  flatAvg = {nn: np.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()} # Flat average, doesn't care about # of images.
+  print "...done"
+
+  #outname = "%s%s.pik" % (directory, "flat_avg")
+  #print "saving flat averages to %s" % outname
+  #cPickle.dump(flatAvg, open(outname, "w"))
+  return flatAvg
+
 def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
   # toShow2.append([n1, n2, sim, one, two, tuple(vr)])
   """
@@ -297,7 +331,9 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
   """
   datasets = ["zsTrain.json"]
   #datasets = ["zsSmall.json"]
-  similarities = cPickle.load(open("%sflat_avg.pik" % dirName, "r"))
+  #similarities = cPickle.load(open("%sflat_avg.pik" % dirName, "r"))
+  cacher = ut.Cacher(dirName)
+  similarities = cacher.run(getAveragedRankings, dirName)
   desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
   similarities = desired
