@@ -112,8 +112,8 @@ def makeAllData():
   global TORCHREGTRAINDATATEST
   global TORCHREGDEVDATATEST
 
-  #makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
-  #makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
+  makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
+  makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
   makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
@@ -184,14 +184,15 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   torch.save(devData, devLoc)
 
 # TODO get this to run on the GPU
-def runModel(modelName, lr=0.0001):
+def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10):
   # Get the data
-  trainLoc = TORCHCOMPTRAINDATATEST
-  devLoc = TORCHCOMPDEVDATATEST
-
+  #trainLoc = TORCHCOMPTRAINDATATEST
+  #devLoc = TORCHCOMPDEVDATATEST
+  print "Loading training data"
   train = torch.load(trainLoc)
   trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=2)
 
+  print "Loading dev data"
   dev = torch.load(devLoc)
   devloader = td.DataLoader(dev, batch_size=128, shuffle=True, num_workers=2)
 
@@ -203,9 +204,9 @@ def runModel(modelName, lr=0.0001):
   outdim = len(y1) # Should be the number of dimensions.
   print "Got indim as %s" % str(indim)
   print "Got outdim as %s" % str(outdim)
-  nHidden = 5
+  nHidden = 100
 
-  printPer = 1
+  printPer = 10
 
   # TODO add in the nouns, and the role. Get proper data.
   #def __init__(self, nInput, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
@@ -219,21 +220,21 @@ def runModel(modelName, lr=0.0001):
   vrESize = int(nVRs / 10)
   print "nVRs: %d" % nVRs
   print "nWords: %d" % nWords
-  net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize)
+  net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
 
   # TODO make a custom loss.
   criterion = nn.MSELoss()
   optimizer = optim.SGD(net.parameters(), lr)
 
   # TODO run on GPU
-  for epoch in range(10):
+  for epoch in range(epochs):
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
       # get the inputs
       inputs, labels = data
       
       # wrap them in Variable
-      inputs, labels = ag.Variable(inputs), ag.Variable(labels)
+      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
       
       # zero the parameter gradients
       optimizer.zero_grad()
@@ -250,24 +251,25 @@ def runModel(modelName, lr=0.0001):
         print('[%d, %5d] loss: %.5g' % (epoch+1, i+1, running_loss / printPer))
         running_loss = 0.0
 
-        for i, data in enumerate(trainloader, 0):
-          inputs, labels = data
-          inputs, labels = ag.Variable(inputs), ag.Variable(labels)
-          outputs = net(inputs)
-          loss = criterion(outputs, labels)
-          running_loss += loss.data[0] # unsure if this is normalized.
-        print('Train Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
-        running_loss = 0.
+    # Print this stuff after every epoch
+    for i, data in enumerate(trainloader, 0):
+      inputs, labels = data
+      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
+      outputs = net(inputs)
+      loss = criterion(outputs, labels)
+      running_loss += loss.data[0] # unsure if this is normalized.
+    print('Train Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
+    running_loss = 0.
 
-        # print the loss over the dev set
-        for i, data in enumerate(devloader, 0):
-          inputs, labels = data
-          inputs, labels = ag.Variable(inputs), ag.Variable(labels)
-          outputs = net(inputs)
-          loss = criterion(outputs, labels)
-          running_loss += loss.data[0] # unsure if this is normalized.
-        print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
-        running_loss = 0.0
+    # print the loss over the dev set
+    for i, data in enumerate(devloader, 0):
+      inputs, labels = data
+      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
+      outputs = net(inputs)
+      loss = criterion(outputs, labels)
+      running_loss += loss.data[0] # unsure if this is normalized.
+    print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
+    running_loss = 0.0
 
         #loss = criterion(net(inputs)
         #trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=2)
