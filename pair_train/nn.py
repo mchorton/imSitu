@@ -1,7 +1,3 @@
-# 1. Where are all the data points?
-# 2. not 5 hidden layers!
-# 3. Get actual data.
-# TODO What do you do if the data can't all fit in memory?
 # Training the image transformation logic using a neural network.
 import json
 import torch.nn as nn
@@ -34,7 +30,9 @@ class ImTransNet(nn.Module):
         super(ImTransNet, self).__init__()
 
         nInput = imFeatures + 2 * WESize + vrESize
-        self.hidden = nn.Linear(nInput, nHidden)
+        self.hidden1 = nn.Linear(nInput, nHidden)
+        self.hidden2 = nn.Linear(nHidden, nHidden)
+        self.hidden3 = nn.Linear(nHidden, nHidden)
         self.output = nn.Linear(nHidden, nOutput) # TODO can I do this at "forward()" time?
         self.wordEmbedding = nn.Embedding(nWords, WESize)
         self.vrEmbedding = nn.Embedding(nVRs, vrESize)
@@ -53,7 +51,7 @@ class ImTransNet(nn.Module):
         x looks like [role, noun1, noun2, features...]
         """
         # TODO get the embedding vector.
-        # TODO this will be slow!
+        # TODO this will be slow! I think? Might happen on CUDA though.
         roles = x[:,0]
         #print "shape of roles: %s" % str(roles.size())
         #print "roles is: %s" % str(roles)
@@ -72,7 +70,9 @@ class ImTransNet(nn.Module):
         x = torch.cat([roleEmbeddings, wordEmbeddings, x[:,3:]], 1)
         #print "final x.shape: %s" % str(x.size())
 
-        x = F.relu(self.hidden(x))
+        x = F.relu(self.hidden1(x))
+        x = F.relu(self.hidden2(x))
+        x = F.relu(self.hidden3(x))
         x = self.output(x)
         return x
 
@@ -188,16 +188,16 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
   # Get the data
   #trainLoc = TORCHCOMPTRAINDATATEST
   #devLoc = TORCHCOMPDEVDATATEST
-  print "Loading training data"
+  print "Loading training data from %s" % str(trainLoc)
   train = torch.load(trainLoc)
-  trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=2)
+  trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=4)
 
-  print "Loading dev data"
+  print "Loading dev data from %s" % str(devLoc)
   dev = torch.load(devLoc)
-  devloader = td.DataLoader(dev, batch_size=128, shuffle=True, num_workers=2)
+  devloader = td.DataLoader(dev, batch_size=128, shuffle=True, num_workers=4)
 
-  npts = len(train)
-  print "found %d datapoints" % npts
+  print "found %d train datapoints" % len(train)
+  print "found %d dev datapoints" % len(dev)
 
   x1, y1 = train[0]
   indim = len(x1) # Should be the number of dimensions.
@@ -206,7 +206,7 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
   print "Got outdim as %s" % str(outdim)
   nHidden = 100
 
-  printPer = 10
+  printPer = 200
 
   # TODO add in the nouns, and the role. Get proper data.
   #def __init__(self, nInput, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
@@ -216,8 +216,8 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
 
   nVRs = max(role2Int.values()) + 1
   nWords = max(noun2Int.values()) + 1
-  WESize = int(nWords / 10)
-  vrESize = int(nVRs / 10)
+  WESize = int(nWords)
+  vrESize = int(nVRs)
   print "nVRs: %d" % nVRs
   print "nWords: %d" % nWords
   net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
