@@ -1,3 +1,4 @@
+# TODO weight the loss function, check all TODOs
 # Training the image transformation logic using a neural network.
 import json
 import torch.nn as nn
@@ -33,25 +34,21 @@ class ImTransNet(nn.Module):
         self.hidden1 = nn.Linear(nInput, nHidden)
         self.hidden2 = nn.Linear(nHidden, nHidden)
         self.hidden3 = nn.Linear(nHidden, nHidden)
-        self.output = nn.Linear(nHidden, nOutput) # TODO can I do this at "forward()" time?
+        self.output = nn.Linear(nHidden, nOutput)
+        # TODO try initializing these differently.
+        print "CONSIDER MODIFYING INITIALIZATION OF EMBEDDINGS"
         self.wordEmbedding = nn.Embedding(nWords, WESize)
         self.vrEmbedding = nn.Embedding(nVRs, vrESize)
         print "WESize: %d" % WESize
         print "vrESize: %d" % vrESize
-        """
-        self.conv1 = nn.Conv2d(1, 6, 5) # 1 input image channel, 6 output channels, 5x5 square convolution kernel
-        self.conv2 = nn.Conv2d(6, 16, 5)
-        self.fc1   = nn.Linear(16*5*5, 120) # an affine operation: y = Wx + b
-        self.fc2   = nn.Linear(120, 84)
-        self.fc3   = nn.Linear(84, 10)
-        """
+        print "nhidden: %d" % nHidden
 
     def forward(self, x):
         """
-        x looks like [role, noun1, noun2, features...]
+        x looks like [batchDim][role, noun1, noun2, features...]
+        where role and noun1/noun2 are indices
         """
-        # TODO get the embedding vector.
-        # TODO this will be slow! I think? Might happen on CUDA though.
+        # get the embedding vector for the roles.
         roles = x[:,0]
         #print "shape of roles: %s" % str(roles.size())
         #print "roles is: %s" % str(roles)
@@ -76,27 +73,83 @@ class ImTransNet(nn.Module):
         x = self.output(x)
         return x
 
-        #exit(1)
+class MatrixDot(nn.Module):
+  def __init__(self, nWords, nVRs, eSize, imSize=1024):
+    super(MatrixDot, self).__init__()
+    self.avrEmbedding = nn.Embedding(nVRs, imSize * eSize)
+    self.wordEmbedding = nn.Embedding(nWords, eSize)
+    self.imSize = imSize
+    # TODO consider modifying this.
+    self.avrEmbedding.weight.data = (torch.rand(self.avrEmbedding.weight.data.size()) - 0.5) * 2e-4
+    self.wordEmbedding.weight.data = (torch.rand(self.wordEmbedding.weight.data.size()) - 0.5) * 2e-1
 
-        """
-        x = F.max_pool2d(F.relu(self.conv1(x)), (2, 2)) # Max pooling over a (2, 2) window
-        x = F.max_pool2d(F.relu(self.conv2(x)), 2) # If the size is a square you can only specify a single number
-        x = x.view(-1, self.num_flat_features(x))
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = self.fc3(x)
-        return x
-        """
-    
+  def forward(self, x):
     """
-    def num_flat_features(self, x):
-        size = x.size()[1:] # all dimensions except the batch dimension
-        num_features = 1
-        for s in size:
-            num_features *= s
-        return num_features
+    x looks like [batchDim][role, noun1, noun2, features...]
     """
-# Our json object looks like:
+    roles = x[:,0]
+    noun1s = x[:,1]
+    noun2s = x[:,2]
+    imFeatures = x[:,3:]
+
+    Avr = self.avrEmbedding(roles.long()).view(len(x), self.imSize, -1) #.view(self.imSize, -1)
+    #print "Avr SIZE: %s" % str(Avr.size())
+
+    #expandedAvr = Avr.view(1, *Avr.size()).expand(len(x), *Avr.size())
+    #print "ExpAvr SIZE: %s" % str(expandedAvr.size())
+
+    n1Emb = self.wordEmbedding(noun1s.long())
+    n2Emb = self.wordEmbedding(noun2s.long())
+    embDif = n2Emb - n1Emb
+    #print "embDif %s" % str(embDif.size())
+    #print "features %s" % str(imFeatures.size())
+
+    resizedEmbDif = embDif.view(embDif.size()[0], embDif.size()[1], 1)
+    #print "resizedEmbDif SIZE: %s" % str(resizedEmbDif.size())
+
+    finalDiff = torch.bmm(Avr, resizedEmbDif).view(len(x), -1)
+    #print "finalDiff SIZE: %s" % str(finalDiff.size())
+    x = imFeatures + finalDiff
+    return x
+
+class MatrixCross(nn.Module):
+  def __init__(self, nWords, wESize, nVRs, vrESize, imSize=1024):
+    super(MatrixCross, self).__init__()
+    print "CONSIDER CHANGING EMBEDDING INITIALIZATION"
+    self.avrEmbedding = nn.Embedding(nVRs, (vrESize * imSize))
+    self.wordEmbedding = nn.Embedding(nWords, wESize)
+    self.B = nn.Linear(vrESize * wESize, imSize)
+    self.imSize = imSize
+    self.vrESize = vrESize
+    self.wESize = wESize
+
+  def forward(self, x):
+    """
+    x looks like [batchDim][role, noun1, noun2, features...]
+    """
+    roles = x[:,0]
+    noun1s = x[:,1]
+    noun2s = x[:,2]
+    imFeatures = x[:,3:].contiguous() 
+    Avr = self.avrEmbedding(roles.long()).view(len(x), self.vrESize, -1)
+    #Avr = Avr.view(self.vrESize, -1)
+    n1Emb = self.wordEmbedding(noun1s.long())
+    n2Emb = self.wordEmbedding(noun2s.long())
+
+    # This is [batchDim][vrEsize][1]
+    avrDotI = torch.bmm(Avr, imFeatures.view(imFeatures.size()[0], imFeatures.size()[1], 1))
+    avrDotI = avrDotI.view(avrDotI.size()[0], avrDotI.size()[1])
+
+    batchOP1 = torch.bmm(avrDotI.view(len(x), -1, 1), n1Emb.view(len(x), 1, -1)).view(len(x), -1)
+    f1 = self.B(batchOP1)
+
+    batchOP2 = torch.bmm(avrDotI.view(len(x), -1, 1), n2Emb.view(len(x), 1, -1)).view(len(x), -1)
+    f2 = self.B(batchOP2)
+
+    x = imFeatures - f1 + f2
+    return x
+
+# Our json object VRNData looks like:
 # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
 def makeAllData():
   global TORCHCOMPTRAINDATA
@@ -128,11 +181,8 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   n1s = [pt[4] for pt in vrnData]
   n2s = [pt[5] for pt in vrnData]
 
-  # TODO need to convert some of these to numbers.
   rolesAsTuples = set([tuple(e) for e in tRoles])
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
-  #def nounToInt(noun):
-  #  return int(noun[1:])
   allNounsUsed = set(n1s)
   noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
 
@@ -183,8 +233,10 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   print "Saving dev data to %s" % devLoc
   torch.save(devData, devLoc)
 
-# TODO get this to run on the GPU
-def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10):
+def runModelTest(modelName, modelType, lr=0.0001, epochs=10):
+  runModel(modelName, modelType, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
+
+def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024):
   # Get the data
   #trainLoc = TORCHCOMPTRAINDATATEST
   #devLoc = TORCHCOMPDEVDATATEST
@@ -204,29 +256,33 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
   outdim = len(y1) # Should be the number of dimensions.
   print "Got indim as %s" % str(indim)
   print "Got outdim as %s" % str(outdim)
-  nHidden = 100
 
   printPer = 200
-
-  # TODO add in the nouns, and the role. Get proper data.
-  #def __init__(self, nInput, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
 
   role2Int = torch.load("%s_role2Int" % trainLoc)
   noun2Int = torch.load("%s_noun2Int" % trainLoc)
 
   nVRs = max(role2Int.values()) + 1
   nWords = max(noun2Int.values()) + 1
-  WESize = int(nWords)
-  vrESize = int(nVRs)
+  WESize = 32
+  vrESize = 32
   print "nVRs: %d" % nVRs
   print "nWords: %d" % nWords
-  net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
+
+  if modelType == "nn":
+    net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
+  elif modelType == "dot":
+    net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda()
+  elif modelType == "cross":
+    net = MatrixCross(nWords, WESize, nVRs, vrESize, 1024).cuda()
+  else:
+    raise Exception("invalid modelType '%s'" % str(modelType))
 
   # TODO make a custom loss.
   criterion = nn.MSELoss()
   optimizer = optim.SGD(net.parameters(), lr)
+  #optimizer = optim.Adam(net.parameters(), lr, weight_decay=weight_decay)
 
-  # TODO run on GPU
   for epoch in range(epochs):
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
@@ -251,6 +307,13 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
         print('[%d, %5d] loss: %.5g' % (epoch+1, i+1, running_loss / printPer))
         running_loss = 0.0
 
+    if epoch % 10 == 9:
+      #lr = args.lr * (0.1 ** (epoch // 30))
+      for param_group in optimizer.param_groups:
+        print "prev rate: %.4f" % param_group['lr']
+        param_group['lr'] = param_group['lr'] / 2
+        print "new  rate: %.4f" % param_group['lr']
+
     # Print this stuff after every epoch
     for i, data in enumerate(trainloader, 0):
       inputs, labels = data
@@ -270,9 +333,6 @@ def runModel(modelName, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMP
       running_loss += loss.data[0] # unsure if this is normalized.
     print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
     running_loss = 0.0
-
-        #loss = criterion(net(inputs)
-        #trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=2)
   print('Finished Training')
 
   torch.save(net, modelName)
