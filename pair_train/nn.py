@@ -283,6 +283,20 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
   optimizer = optim.SGD(net.parameters(), lr)
   #optimizer = optim.Adam(net.parameters(), lr, weight_decay=weight_decay)
 
+  def getLoss(loader, epoch, name):
+    running_loss = 0.
+    nIter = 0
+    for i, data in enumerate(loader, 0):
+      inputs, labels = data
+      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
+      outputs = net(inputs)
+      loss = criterion(outputs, labels)
+      running_loss += loss.data[0] # unsure if this is normalized.
+      nIter += 1
+    print('%s Set [Epoch %d] loss: %.5g' % (name, epoch+1, running_loss / nIter))
+
+  getLoss(trainloader, -1, "Train")
+  getLoss(devloader, -1, "Dev")
   for epoch in range(epochs):
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
@@ -298,7 +312,7 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
       # forward + backward + optimize
       outputs = net(inputs)
       loss = criterion(outputs, labels)
-      loss.backward()        
+      loss.backward()
       optimizer.step()
       
       # print statistics
@@ -315,23 +329,31 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
         print "new  rate: %.4f" % param_group['lr']
 
     # Print this stuff after every epoch
+    getLoss(trainloader, epoch, "Train")
+    getLoss(devloader, epoch, "Dev")
+    """
+    nIter = 0
     for i, data in enumerate(trainloader, 0):
       inputs, labels = data
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
       outputs = net(inputs)
       loss = criterion(outputs, labels)
       running_loss += loss.data[0] # unsure if this is normalized.
-    print('Train Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
+      nIter += 1
+    print('Train Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss / nIter))
     running_loss = 0.
 
     # print the loss over the dev set
+    nIter = 0
     for i, data in enumerate(devloader, 0):
       inputs, labels = data
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
       outputs = net(inputs)
       loss = criterion(outputs, labels)
       running_loss += loss.data[0] # unsure if this is normalized.
-    print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss))
+      nIter += 1
+    print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss / nIter))
+    """
     running_loss = 0.0
   print('Finished Training')
 
