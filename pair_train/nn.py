@@ -118,6 +118,8 @@ class MatrixCross(nn.Module):
     print "CONSIDER CHANGING EMBEDDING INITIALIZATION"
     self.avrEmbedding = nn.Embedding(nVRs, (vrESize * imSize))
     self.wordEmbedding = nn.Embedding(nWords, wESize)
+    self.avrEmbedding.weight.data = (torch.rand(self.avrEmbedding.weight.data.size()) - 0.5) * 2e-4
+    self.wordEmbedding.weight.data = (torch.rand(self.wordEmbedding.weight.data.size()) - 0.5) * 2e-1
     self.B = nn.Linear(vrESize * wESize, imSize)
     self.imSize = imSize
     self.vrESize = vrESize
@@ -211,8 +213,8 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   ydev = []
   wasted = 0
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
-    x = [role2Int[tuple(tRole)]] + [noun2Int[noun1]] + [noun2Int[noun2]] + list(imToFeatures[im1Name])
-    y = list(imToFeatures[im2Name])
+    x = [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
+    y = list(imToFeatures[im2Name]) + [score]
     if im1Name in trainIm and im2Name in trainIm:
       xtrain.append(x)
       ytrain.append(y)
@@ -236,22 +238,23 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
 def runModelTest(modelName, modelType, lr=0.0001, epochs=10):
   runModel(modelName, modelType, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
 
-def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024):
+def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128):
   # Get the data
   #trainLoc = TORCHCOMPTRAINDATATEST
   #devLoc = TORCHCOMPDEVDATATEST
   print "Loading training data from %s" % str(trainLoc)
   train = torch.load(trainLoc)
-  trainloader = td.DataLoader(train, batch_size=128, shuffle=True, num_workers=4)
+  trainloader = td.DataLoader(train, batch_size=batchSize, shuffle=True, num_workers=4)
 
   print "Loading dev data from %s" % str(devLoc)
   dev = torch.load(devLoc)
-  devloader = td.DataLoader(dev, batch_size=128, shuffle=True, num_workers=4)
+  devloader = td.DataLoader(dev, batch_size=batchSize, shuffle=True, num_workers=4)
 
   print "found %d train datapoints" % len(train)
   print "found %d dev datapoints" % len(dev)
 
-  x1, y1 = train[0]
+  x1, y1AndScore = train[0]
+  y1 = y1AndScore[:-1]
   indim = len(x1) # Should be the number of dimensions.
   outdim = len(y1) # Should be the number of dimensions.
   print "Got indim as %s" % str(indim)
@@ -287,10 +290,22 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
     running_loss = 0.
     nIter = 0
     for i, data in enumerate(loader, 0):
-      inputs, labels = data
+      inputs, labelsAndScore = data
+      #print "inputs.size()=%s" % str(inputs.size())
+      #print "labelsAndScore.size()=%s" % str(labelsAndScore.size())
+      scores = ag.Variable(labelsAndScore[:,-1].cuda())
+      labels = labelsAndScore[:,:-1].cuda()
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
       outputs = net(inputs)
-      loss = criterion(outputs, labels)
+      # Issue: not both variables.
+      scores = scores.view(len(scores), 1).expand(outputs.size())
+      #print "outputs is: %s" % str(outputs.size())
+      #print "labels is: %s" % str(labels.size())
+      #print "scores is: %s" % str(scores.size())
+      #print "type of labels is %s" % str(type(labels))
+      #print "type of scores is %s" % str(type(scores))
+
+      loss = criterion(torch.mul(outputs, scores), torch.mul(labels, scores))
       running_loss += loss.data[0] # unsure if this is normalized.
       nIter += 1
     print('%s Set [Epoch %d] loss: %.5g' % (name, epoch+1, running_loss / nIter))
@@ -301,7 +316,10 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
     running_loss = 0.0
     for i, data in enumerate(trainloader, 0):
       # get the inputs
-      inputs, labels = data
+      inputs, labelsAndScore = data
+
+      scores = ag.Variable(labelsAndScore[:,-1].cuda()) # Last row is scores
+      labels = labelsAndScore[:,:-1]
       
       # wrap them in Variable
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
@@ -311,7 +329,8 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
       
       # forward + backward + optimize
       outputs = net(inputs)
-      loss = criterion(outputs, labels)
+      scores = scores.view(len(scores), 1).expand(outputs.size())
+      loss = criterion(torch.mul(outputs, scores), torch.mul(labels, scores))
       loss.backward()
       optimizer.step()
       
