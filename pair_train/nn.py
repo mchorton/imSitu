@@ -10,7 +10,9 @@ import torch.optim as optim
 import torch.autograd as ag
 import torch.nn.functional as F
 import time
+from ast import literal_eval as make_tuple
 
+TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
 TORCHCOMPDEVDATA = "data/pairLearn/compdev.pyt"
 TORCHREGTRAINDATA = "data/pairLearn/regtrain.pyt"
@@ -27,29 +29,40 @@ COMPFEATDIR = "data/comp_fc7/"
 REGFEATDIR = "data/regression_fc7/"
 
 class ImTransNet(nn.Module):
-    def __init__(self, imFeatures, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
+    def __init__(self, imFeatures, verb2Len, depth, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
         super(ImTransNet, self).__init__()
 
-        nInput = imFeatures + 2 * WESize + vrESize
-        self.hidden1 = nn.Linear(nInput, nHidden)
-        self.hidden2 = nn.Linear(nHidden, nHidden)
-        self.hidden3 = nn.Linear(nHidden, nHidden)
+        nInput = imFeatures + 2 * WESize + vrESize + 6 * (WESize + vrESize)
+        print nInput
+        self.input_layer = nn.Linear(nInput, nHidden)
+        self.hidden_layers = nn.ModuleList( [nn.Linear(nHidden, nHidden) for i in range(0,depth)])
         self.output = nn.Linear(nHidden, nOutput)
+        
         # TODO try initializing these differently.
-        print "CONSIDER MODIFYING INITIALIZATION OF EMBEDDINGS"
+        #print "CONSIDER MODIFYING INITIALIZATION OF EMBEDDINGS"
         self.wordEmbedding = nn.Embedding(nWords, WESize)
         self.vrEmbedding = nn.Embedding(nVRs, vrESize)
+       
+        self.context_wordEmbedding = nn.Embedding(nWords+1, WESize)
+        self.context_vrEmbedding = nn.Embedding(nVRs+1, vrESize)
+ 
         print "WESize: %d" % WESize
         print "vrESize: %d" % vrESize
         print "nhidden: %d" % nHidden
 
-    def forward(self, x):
+    def forward(self, x, train):
         """
         x looks like [batchDim][role, noun1, noun2, features...]
         where role and noun1/noun2 are indices
         """
         # get the embedding vector for the roles.
-        roles = x[:,0]
+        context = x[:,0:12]
+        context_vectors = []
+        for i in range(0, 6):
+          context_vectors.append(self.context_vrEmbedding(context[:,2*i].long()).view(len(x), -1))
+          context_vectors.append(self.context_wordEmbedding(context[:,1 + 2*i].long()).view(len(x),-1))
+
+        roles = x[:,12]
         #print "shape of roles: %s" % str(roles.size())
         #print "roles is: %s" % str(roles)
         roleEmbeddings = self.vrEmbedding(roles.long()) # This is now [batchDim][1][embedding size]
@@ -57,19 +70,26 @@ class ImTransNet(nn.Module):
         roleEmbeddings = roleEmbeddings.view(len(x), -1)
         #print "after reshape , shape of roleEmbeddings: %s" % str(roleEmbeddings.size())
 
-        words = x[:,1:3]
+        words = x[:,13:15]
         #print "shape of words: %s" % str(words.size())
         wordEmbeddings = self.wordEmbedding(words.long()) # This is now [batchDim][1][embedding size]
         #print "shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
         wordEmbeddings = wordEmbeddings.view(len(x), -1)
         #print "after reshape , shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
-
-        x = torch.cat([roleEmbeddings, wordEmbeddings, x[:,3:]], 1)
+        f = x[:, 15:]
+        x = torch.cat( ( context_vectors + [roleEmbeddings, wordEmbeddings, f] ), 1)
+        #x = torch.cat( ( [roleEmbeddings, wordEmbeddings, f] ), 1)
         #print "final x.shape: %s" % str(x.size())
-
-        x = F.relu(self.hidden1(x))
-        x = F.relu(self.hidden2(x))
-        x = F.relu(self.hidden3(x))
+        x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
+        for i in range(0, len(self.hidden_layers)):
+          x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train)
+          if i == 0: x_prev = x
+          #add skip connections for depth
+          if i > 0 and i % 2 == 0: 
+            x = x + x_prev
+            x_prev = x
+        #x = F.dropout(F.relu(self.hidden2(x)), training=train)
+        #x = F.dropout(F.relu(self.hidden3(x)), training=train)
         x = self.output(x)
         return x
 
@@ -182,16 +202,40 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   tRoles = [pt[3] for pt in vrnData] # This is a tuple btw.
   n1s = [pt[4] for pt in vrnData]
   n2s = [pt[5] for pt in vrnData]
+  full_an1 = [pt[6] for pt in vrnData]
+  full_an2 = [pt[7] for pt in vrnData]
+  
+  verb_len = {}
+  all_verbs = set()
+  all_roles = set()
+  all_nouns = set()
+  for _map in full_an1:
+    for (k,v) in _map.items():
+      (verb,role) = make_tuple(k)
+      all_verbs.add(verb)
+      all_roles.add(make_tuple(k))
+      all_nouns.add(v)     
+    verb_len[verb] = len(_map)
 
-  rolesAsTuples = set([tuple(e) for e in tRoles])
+  rolesAsTuples = all_roles 
+#set([tuple(e) for e in tRoles])
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
-  allNounsUsed = set(n1s)
+  print role2Int
+  allNounsUsed = all_nouns 
+#set(n1s)
   noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
+  verb2Int = {verb: index for index, verb in enumerate(sorted(list(all_verbs)))}
+
+  verb2Len = {}
+  for (k,v) in verb2Int.items(): verb2Len[verb2Int[k]] = v
 
   torch.save(role2Int, "%s_role2Int" % trainLoc)
   torch.save(noun2Int, "%s_noun2Int" % trainLoc)
+  torch.save(verb2Int, "%s_verb2Int" % trainLoc)
+  torch.save(verb2Len, "%s_verb2Len" % trainLoc)
 
-  print "role2Int size: %d" % len(role2Int)
+  print "verb2Int size: %d" % len(verb2Int)
+  print "role2int size: %d" % len(role2Int)
   print "noun2Int size: %d" % len(noun2Int)
 
   imToFeatures = { name: np.fromfile("%s%s" % (featDir, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
@@ -213,8 +257,22 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   ydev = []
   wasted = 0
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
-    x = [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
+    anitems = [] 
+    for (k,v) in an1.items():
+      rid = role2Int[make_tuple(k)]
+      nid = noun2Int[v]
+      anitems.append((rid,nid))
+    while len(anitems) < 6:
+      anitems.append((len(role2Int), len(noun2Int)))
+   
+    anitems = sorted(anitems, key = lambda x : x[0]) 
+    indexes = []
+    for (k,v) in anitems: indexes += [k,v]
+ 
+    x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
+    print len(x)
     y = list(imToFeatures[im2Name]) + [score]
+    #print str(x[0:4]) + " , " + str(y[0]) + "," + str(y[-1])
     if im1Name in trainIm and im2Name in trainIm:
       xtrain.append(x)
       ytrain.append(y)
@@ -238,12 +296,13 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
 def runModelTest(modelName, modelType, lr=0.0001, epochs=10):
   runModel(modelName, modelType, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
 
-def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128):
+def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128):
   # Get the data
   #trainLoc = TORCHCOMPTRAINDATATEST
   #devLoc = TORCHCOMPDEVDATATEST
   print "Loading training data from %s" % str(trainLoc)
   train = torch.load(trainLoc)
+  
   trainloader = td.DataLoader(train, batch_size=batchSize, shuffle=True, num_workers=4)
 
   print "Loading dev data from %s" % str(devLoc)
@@ -264,16 +323,17 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
 
   role2Int = torch.load("%s_role2Int" % trainLoc)
   noun2Int = torch.load("%s_noun2Int" % trainLoc)
+  verb2Len = torch.load("%s_verb2Len" % trainLoc)
 
   nVRs = max(role2Int.values()) + 1
   nWords = max(noun2Int.values()) + 1
-  WESize = 32
-  vrESize = 32
+  WESize = 128
+  vrESize = 128
   print "nVRs: %d" % nVRs
   print "nWords: %d" % nWords
 
   if modelType == "nn":
-    net = ImTransNet(indim - 3, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
+    net = ImTransNet(indim - (3+12), verb2Len, depth, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
   elif modelType == "dot":
     net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda()
   elif modelType == "cross":
@@ -283,9 +343,9 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
 
   # TODO make a custom loss.
   criterion = nn.MSELoss()
-  optimizer = optim.SGD(net.parameters(), lr)
+  optimizer = optim.SGD(net.parameters(), lr=lr, momentum=.9, weight_decay=.00005)
   #optimizer = optim.Adam(net.parameters(), lr, weight_decay=weight_decay)
-
+  #optimizer = optim.RMSprop(net.parameters(), lr=lr, weight_decay=weight_decay)
   def getLoss(loader, epoch, name):
     running_loss = 0.
     nIter = 0
@@ -296,7 +356,7 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
       scores = ag.Variable(labelsAndScore[:,-1].cuda())
       labels = labelsAndScore[:,:-1].cuda()
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
-      outputs = net(inputs)
+      outputs = net(inputs,False)
       # Issue: not both variables.
       scores = scores.view(len(scores), 1).expand(outputs.size())
       #print "outputs is: %s" % str(outputs.size())
@@ -328,7 +388,7 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
       optimizer.zero_grad()
       
       # forward + backward + optimize
-      outputs = net(inputs)
+      outputs = net(inputs,True)
       scores = scores.view(len(scores), 1).expand(outputs.size())
       loss = criterion(torch.mul(outputs, scores), torch.mul(labels, scores))
       loss.backward()
@@ -344,7 +404,7 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
       #lr = args.lr * (0.1 ** (epoch // 30))
       for param_group in optimizer.param_groups:
         print "prev rate: %.4f" % param_group['lr']
-        param_group['lr'] = param_group['lr'] / 2
+        param_group['lr'] = param_group['lr'] * .8
         print "new  rate: %.4f" % param_group['lr']
 
     # Print this stuff after every epoch
@@ -378,5 +438,5 @@ def runModel(modelName, modelType, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLo
 
   torch.save(net, modelName)
 
-if __name__ == '__main__':
-  makeAllData()
+#if __name__ == '__main__':
+#  makeAllData()
