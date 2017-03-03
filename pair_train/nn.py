@@ -220,7 +220,7 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   rolesAsTuples = all_roles 
 #set([tuple(e) for e in tRoles])
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
-  print role2Int
+  #print role2Int
   allNounsUsed = all_nouns 
 #set(n1s)
   noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
@@ -243,7 +243,7 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
 
   # Choose which images are part of train, and which are part of dev
   allNames = list(set(im1Names))
-  random.shuffle(allNames)
+  random.shuffle(allNames, 79569) #a really random seed
   trainIm = set(allNames[:len(allNames)/2])
   devIm = set(allNames[len(allNames)/2:])
 
