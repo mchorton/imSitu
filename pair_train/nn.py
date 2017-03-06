@@ -1,4 +1,3 @@
-# TODO weight the loss function, check all TODOs
 # Training the image transformation logic using a neural network.
 import json
 import torch.nn as nn
@@ -71,11 +70,8 @@ class ImTransNet(nn.Module):
         #print "after reshape , shape of roleEmbeddings: %s" % str(roleEmbeddings.size())
 
         words = x[:,13:15]
-        #print "shape of words: %s" % str(words.size())
         wordEmbeddings = self.wordEmbedding(words.long()) # This is now [batchDim][1][embedding size]
-        #print "shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
         wordEmbeddings = wordEmbeddings.view(len(x), -1)
-        #print "after reshape , shape of wordEmbeddings: %s" % str(wordEmbeddings.size())
         f = x[:, 15:]
         x = torch.cat( ( context_vectors + [roleEmbeddings, wordEmbeddings, f] ), 1)
         #x = torch.cat( ( [roleEmbeddings, wordEmbeddings, f] ), 1)
@@ -193,8 +189,34 @@ def makeAllData():
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile):
+  # prep_work
   vrnData = json.load(open(vrndatafile))
-  print "There are %d valid pairs" % len(vrnData)
+  allNames = list(set([pt[1] for pt in vrnData]))
+  random.seed(79569) #a really random seed
+  random.shuffle(allNames) 
+  trainImgNames = set(allNames[:len(allNames)/2])
+  devImgNames = set(allNames[len(allNames)/2:])
+
+  trainImgNameFile = "%s_%s" % (trainLoc, "trainImgNames.json")
+  json.dump(list(trainImgNames), open(trainImgNameFile, "w+"))
+
+  devImgNameFile = "%s_%s" % (devLoc, "devImgNames.json")
+  print "Saving img names to %s" % devImgNameFile
+  json.dump(list(devImgNames), open(devImgNameFile, "w+"))
+
+  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames)
+  print "Saving data to %s" % trainLoc
+  torch.save(dataSet, trainLoc)
+
+  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames)
+  print "Saving data to %s" % devLoc
+  torch.save(dataSet, devLoc)
+
+def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames):
+  """
+  Create a pytorch TensorDataset at 'outFileName'. It contains input suitable
+  for the models trained to generate image features.
+  """
   # Split it into lists of the roles, noun1, noun2, verb
   scores = [pt[0] for pt in vrnData]
   im1Names = [pt[1] for pt in vrnData]
@@ -204,6 +226,8 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   n2s = [pt[5] for pt in vrnData]
   full_an1 = [pt[6] for pt in vrnData]
   full_an2 = [pt[7] for pt in vrnData]
+
+  print "done reading data"
   
   verb_len = {}
   all_verbs = set()
@@ -217,14 +241,14 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
       all_nouns.add(v)     
     verb_len[verb] = len(_map)
 
+  print "done getting verb lengths"
+
   rolesAsTuples = all_roles 
-#set([tuple(e) for e in tRoles])
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
-  #print role2Int
   allNounsUsed = all_nouns 
-#set(n1s)
   noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
   verb2Int = {verb: index for index, verb in enumerate(sorted(list(all_verbs)))}
+  print "done getting maps"
 
   verb2Len = {}
   for (k,v) in verb2Int.items(): verb2Len[verb2Int[k]] = v
@@ -238,25 +262,16 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   print "role2int size: %d" % len(role2Int)
   print "noun2Int size: %d" % len(noun2Int)
 
-  imToFeatures = { name: np.fromfile("%s%s" % (featDir, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
+  imToFeatures = { name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
   imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
 
-  # Choose which images are part of train, and which are part of dev
-  allNames = list(set(im1Names))
-  random.shuffle(allNames, 79569) #a really random seed
-  trainIm = set(allNames[:len(allNames)/2])
-  devIm = set(allNames[len(allNames)/2:])
-
-  print len(trainIm)
-  print len(devIm)
-
   # Loop through, building train and dev sets.
-  xtrain = []
-  ytrain = []
-  xdev = []
-  ydev = []
+  xData = []
+  yData = []
   wasted = 0
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
+    if i % 10000 == 10000-1:
+      print "iteration %d of %d" % (i, len(vrnData))
     anitems = [] 
     for (k,v) in an1.items():
       rid = role2Int[make_tuple(k)]
@@ -270,31 +285,17 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
     for (k,v) in anitems: indexes += [k,v]
  
     x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
-    print len(x)
     y = list(imToFeatures[im2Name]) + [score]
     #print str(x[0:4]) + " , " + str(y[0]) + "," + str(y[-1])
-    if im1Name in trainIm and im2Name in trainIm:
-      xtrain.append(x)
-      ytrain.append(y)
-    elif im1Name in devIm and im2Name in devIm:
-      xdev.append(x)
-      ydev.append(y)
-    else:
-      wasted += 1
-  print "Train set has %d points" % len(xtrain)
-  print "Dev set has %d points" % len(xdev)
-  print "Samples wasted: %d" % wasted
+    if im1Name in whitelistedImgNames:
+      xData.append(x)
+      yData.append(y)
 
-  trainData = td.TensorDataset(torch.Tensor(xtrain), torch.Tensor(ytrain))
-  devData = td.TensorDataset(torch.Tensor(xdev), torch.Tensor(ydev))
+  dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
+  return dataSet
 
-  print "Saving train data to %s" % trainLoc
-  torch.save(trainData, trainLoc)
-  print "Saving dev data to %s" % devLoc
-  torch.save(devData, devLoc)
-
-def runModelTest(modelName, modelType, lr=0.0001, epochs=10):
-  runModel(modelName, modelType, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
+def runModelTest(modelName, modelType, lr=0.0001, epochs=10, depth=2):
+  runModel(modelName, modelType, depth, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
 
 def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128):
   # Get the data
@@ -341,7 +342,6 @@ def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDA
   else:
     raise Exception("invalid modelType '%s'" % str(modelType))
 
-  # TODO make a custom loss.
   criterion = nn.MSELoss()
   optimizer = optim.SGD(net.parameters(), lr=lr, momentum=.9, weight_decay=.00005)
   #optimizer = optim.Adam(net.parameters(), lr, weight_decay=weight_decay)
@@ -351,19 +351,11 @@ def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDA
     nIter = 0
     for i, data in enumerate(loader, 0):
       inputs, labelsAndScore = data
-      #print "inputs.size()=%s" % str(inputs.size())
-      #print "labelsAndScore.size()=%s" % str(labelsAndScore.size())
       scores = ag.Variable(labelsAndScore[:,-1].cuda())
       labels = labelsAndScore[:,:-1].cuda()
       inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
       outputs = net(inputs,False)
-      # Issue: not both variables.
       scores = scores.view(len(scores), 1).expand(outputs.size())
-      #print "outputs is: %s" % str(outputs.size())
-      #print "labels is: %s" % str(labels.size())
-      #print "scores is: %s" % str(scores.size())
-      #print "type of labels is %s" % str(type(labels))
-      #print "type of scores is %s" % str(type(scores))
 
       loss = criterion(torch.mul(outputs, scores), torch.mul(labels, scores))
       running_loss += loss.data[0] # unsure if this is normalized.
@@ -410,33 +402,30 @@ def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDA
     # Print this stuff after every epoch
     getLoss(trainloader, epoch, "Train")
     getLoss(devloader, epoch, "Dev")
-    """
-    nIter = 0
-    for i, data in enumerate(trainloader, 0):
-      inputs, labels = data
-      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
-      outputs = net(inputs)
-      loss = criterion(outputs, labels)
-      running_loss += loss.data[0] # unsure if this is normalized.
-      nIter += 1
-    print('Train Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss / nIter))
-    running_loss = 0.
-
-    # print the loss over the dev set
-    nIter = 0
-    for i, data in enumerate(devloader, 0):
-      inputs, labels = data
-      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
-      outputs = net(inputs)
-      loss = criterion(outputs, labels)
-      running_loss += loss.data[0] # unsure if this is normalized.
-      nIter += 1
-    print('Dev Set [Epoch %d] loss: %.5g' % (epoch+1, running_loss / nIter))
-    """
     running_loss = 0.0
   print('Finished Training')
 
   torch.save(net, modelName)
 
-#if __name__ == '__main__':
-#  makeAllData()
+def computeAllFeatures(model, dataSet):
+  """
+  model: a subclass of nn.Module, used to compute features
+  dataSet: a torch.DataSet with the inputs and expected outputs.
+  Since this function only really needs the inputs, the expected outputs can
+  be anything (this function could also take a torch.Tensor in principle,
+  but the way other the code is written, this input is convenient.
+
+  returns a torch.Tensor() containing the features of the input
+  """
+  trainloader = td.DataLoader(dataSet, batch_size=128, shuffle=False, num_workers=4)
+  ret = torch.Tensor()
+  for i, data in enumerate(trainloader, 0):
+    inputs, _ = data
+    inputs = ag.Variable(inputs.cuda())
+    outputs = model(inputs, False)
+    ret = torch.cat([ret, outputs.data.cpu()])
+  return ret
+
+if __name__ == '__main__':
+  makeAllData()
+# Training the image transformation logic using a neural network.
