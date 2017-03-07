@@ -27,6 +27,13 @@ VRNDATA = "data/pairLearn/vrn.json"
 COMPFEATDIR = "data/comp_fc7/"
 REGFEATDIR = "data/regression_fc7/"
 
+def getContextVectors(contextVREmbedding, contextWordEmbedding, context, batchSize):
+  context_vectors = []
+  for i in range(6):
+    context_vectors.append(contextVREmbedding(context[:,2*i].long()).view(batchSize, -1))
+    context_vectors.append(contextWordEmbedding(context[:,1 + 2*i].long()).view(batchSize,-1))
+  return context_vectors
+
 class ImTransNet(nn.Module):
     def __init__(self, imFeatures, verb2Len, depth, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
         super(ImTransNet, self).__init__()
@@ -56,10 +63,7 @@ class ImTransNet(nn.Module):
         """
         # get the embedding vector for the roles.
         context = x[:,0:12]
-        context_vectors = []
-        for i in range(0, 6):
-          context_vectors.append(self.context_vrEmbedding(context[:,2*i].long()).view(len(x), -1))
-          context_vectors.append(self.context_wordEmbedding(context[:,1 + 2*i].long()).view(len(x),-1))
+        context_vectors = getContextVectors(self.context_vrEmbedding, self.context_wordEmbedding, context, len(x))
 
         roles = x[:,12]
         #print "shape of roles: %s" % str(roles.size())
@@ -305,7 +309,9 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, ganSty
   dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
   return dataSet
 
-def runModelTest(modelName, modelType, lr=0.0001, epochs=10, depth=2):
+def runModelTest(modelName, modelType, lr=0.0001, epochs=1, depth=2):
+  makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
+  makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
   runModel(modelName, modelType, depth, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
 
 def runModel(modelName, modelType, depth=2, lr=0.0001, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128):
