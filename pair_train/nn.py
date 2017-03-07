@@ -188,7 +188,7 @@ def makeAllData():
   makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
-def makeData(trainLoc, devLoc, featDir, vrndatafile):
+def makeData(trainLoc, devLoc, featDir, vrndatafile, ganStyle=False):
   # prep_work
   vrnData = json.load(open(vrndatafile))
   allNames = list(set([pt[1] for pt in vrnData]))
@@ -204,18 +204,25 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile):
   print "Saving img names to %s" % devImgNameFile
   json.dump(list(devImgNames), open(devImgNameFile, "w+"))
 
-  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames)
+  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames, ganStyle=ganStyle)
   print "Saving data to %s" % trainLoc
   torch.save(dataSet, trainLoc)
 
-  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames)
+  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames, ganStyle=ganStyle)
   print "Saving data to %s" % devLoc
   torch.save(dataSet, devLoc)
 
-def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames):
+# TODO refactor this a bit. Also, make some stability tests!
+def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, ganStyle=False):
   """
   Create a pytorch TensorDataset at 'outFileName'. It contains input suitable
   for the models trained to generate image features.
+  trainLoc - the destination to which this dataset will be saved. (Note this
+             function doesn't save the dataset, but it needs a pathname from
+             which to generate intermediate file names)
+  ...
+  ganStyle - if True, this function will generate a dataset usable for our GAN
+             instead of for the original pair generation network
   """
   # Split it into lists of the roles, noun1, noun2, verb
   scores = [pt[0] for pt in vrnData]
@@ -284,8 +291,12 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames):
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
-    x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
-    y = list(imToFeatures[im2Name]) + [score]
+    if not ganStyle:
+      x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
+      y = list(imToFeatures[im2Name]) + [score]
+    else:
+      x = list(imToFeatures[im1Name])
+      y = list(indexes) + [score]
     #print str(x[0:4]) + " , " + str(y[0]) + "," + str(y[-1])
     if im1Name in whitelistedImgNames:
       xData.append(x)
