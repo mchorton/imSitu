@@ -25,9 +25,12 @@ class NetD(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
     super(NetD, self).__init__()
     ydataLength = 6 * wESize + 6 * vrESize
-    self.input_layer = nn.Linear(inputSize + ydataLength, hiddenSize)
+    effectiveYSize = 20
+    self.input_layer = nn.Linear(inputSize + effectiveYSize, hiddenSize)
     self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
     self.output = nn.Linear(hiddenSize, outputSize)
+
+    self.ymap = nn.Linear(ydataLength, effectiveYSize)
 
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
@@ -41,7 +44,8 @@ class NetD(nn.Module):
     """
     context = y[:,:12] # Everything except the similarity score
     context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
-    x = torch.cat([x] + context_vectors, 1)
+    mapped_cv = self.ymap(torch.cat(context_vectors, 1))
+    x = torch.cat([x] + [mapped_cv], 1)
 
     x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
     for i in range(0, len(self.hidden_layers)):
@@ -60,9 +64,12 @@ class NetG(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
     super(NetG, self).__init__()
     ydataLength = 6 * wESize + 6 * vrESize
-    self.input_layer = nn.Linear(inputSize + ydataLength, hiddenSize)
+    effectiveYSize = 20
+    self.input_layer = nn.Linear(inputSize + effectiveYSize, hiddenSize)
     self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
     self.output = nn.Linear(hiddenSize, outputSize)
+
+    self.ymap = nn.Linear(ydataLength, effectiveYSize)
 
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
@@ -75,7 +82,8 @@ class NetG(nn.Module):
     """
     context = y[:,:12] # Everything except the similarity score
     context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
-    x = torch.cat([x] + context_vectors, 1)
+    mapped_cv = self.ymap(torch.cat(context_vectors, 1))
+    x = torch.cat([x] + [mapped_cv], 1)
 
     x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
     for i in range(0, len(self.hidden_layers)):
@@ -93,7 +101,7 @@ class NetG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-3):
+def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7):
   # Set up variables.
   real_label = 1
   fake_label = 0
@@ -108,20 +116,22 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
   nWords = max(noun2Int.values()) + 1
   wESize = 128
   vrESize = 128
-  hiddenSize = 1024
-  depth = 10
+  hiddenSize = 4096
+  depth = 2
+  genDepth = 1
+  nz = 100
 
   # Load variables, begin training.
   dataset = torch.load(datasetFileName)
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=True, num_workers=4)
   
-  inputSize = dataset[0][0].size(0)
-  assert(inputSize == 1024), "Invalid dataset dimensions!"
+  xSize = dataset[0][0].size(0)
+  assert(xSize == 1024), "Invalid dataset dimensions!"
 
-  netD = NetD(inputSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
-  netG = NetG(inputSize, inputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
+  netD = NetD(xSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
+  netG = NetG(nz, xSize, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
   criterion = nn.BCELoss().cuda()
-  noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, inputSize).cuda(gpu_id))
+  noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
   label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
   optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
   optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
@@ -133,14 +143,14 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
       xdata, ydata = data
 
       xdata, ydata = ag.Variable(xdata.cuda(gpu_id)), ag.Variable(ydata.cuda(gpu_id))
-      output = netD(xdata, ydata, True)
+      output = netD(xdata, ydata, True) # TODO I think some of these calls for output should *NOT* use train=True
       label.data.fill_(real_label)
       errD_real = criterion(output.view(-1), label[:len(output)])
       errD_real.backward()
       D_x = output.data.mean()
 
       noise.data.normal_(0, 1)
-      fake = netG(noise[:len(ydata)], ydata)
+      fake = netG(noise[:len(ydata)], ydata, True)
       label.data.fill_(fake_label)
       output = netD(fake.detach(), ydata, True)
       errD_fake = criterion(output, label[:len(output)])
