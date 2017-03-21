@@ -115,14 +115,14 @@ def generateDepsAndChimeras():
   # This file contains the image names used as the source in chimera generation
   sourceWhitelistName = "%s_%s" % (devLoc, "devImgNames.json")  
 
-  # Generate everything
-  pairnn.makeData(trainLoc, devLoc, featDir, pairFileName)
-  logger.info("Running model")
+  # Generate everything dont always regenerate
+#  pairnn.makeData(trainLoc, devLoc, featDir, pairFileName)
+  logger.info("Running model {0}".format(modelType))
   pairnn.runModel(modelFileName, modelType, trainLoc=trainLoc, devLoc=devLoc)
   logger.info("Writing Chimeras")
   logger.debug("modelFileName=%s" % modelFileName)
   logger.debug("pairFileName=%s" % pairFileName)
   write_augmented_chimeras("%s_chimeras" % modelFileName, modelFileName, pairFileName, sourceWhitelistName, featDir)
 
-if __name__ == '__main__':
-  generateDepsAndChimeras()
+#if __name__ == '__main__':
+#  generateDepsAndChimeras()
