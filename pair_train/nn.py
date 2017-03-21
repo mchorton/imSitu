@@ -11,6 +11,8 @@ import torch.nn.functional as F
 import time
 from ast import literal_eval as make_tuple
 import math
+import utils.mylogger as logging
+import tqdm
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -266,6 +268,7 @@ def makeAllData():
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False):
+  logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
   # prep_work
   vrnData = json.load(open(vrndatafile))
   allNames = list(set([pt[1] for pt in vrnData]))
@@ -278,15 +281,15 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False)
   json.dump(list(trainImgNames), open(trainImgNameFile, "w+"))
 
   devImgNameFile = "%s_%s" % (devLoc, "devImgNames.json")
-  print "Saving img names to %s" % devImgNameFile
+  logging.getLogger(__name__).info("Saving img names to %s" % devImgNameFile)
   json.dump(list(devImgNames), open(devImgNameFile, "w+"))
 
   dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames, mode=mode, ganStyle=ganStyle)
-  print "Saving data to %s" % trainLoc
+  logging.getLogger(__name__).info("Saving data to %s" % trainLoc)
   torch.save(dataSet, trainLoc)
 
   dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames, mode=mode, ganStyle=ganStyle)
-  print "Saving data to %s" % devLoc
+  logging.getLogger(__name__).info("Saving data to %s" % devLoc)
   torch.save(dataSet, devLoc)
 
 # TODO refactor this a bit. Also, make some stability tests!
@@ -311,7 +314,7 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   full_an1 = [pt[6] for pt in vrnData]
   full_an2 = [pt[7] for pt in vrnData]
 
-  print "done reading data"
+  logging.getLogger(__name__).info("Done reading data")
   
   verb_len = {}
   all_verbs = set()
@@ -325,14 +328,14 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
       all_nouns.add(v)     
     verb_len[verb] = len(_map)
 
-  print "done getting verb lengths"
+  logging.getLogger(__name__).debug("Done getting verb lengths")
 
   rolesAsTuples = all_roles 
   role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
   allNounsUsed = all_nouns 
   noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
   verb2Int = {verb: index for index, verb in enumerate(sorted(list(all_verbs)))}
-  print "done getting maps"
+  logging.getLogger(__name__).debug("Done getting maps")
 
   verb2Len = {}
   for (k,v) in verb2Int.items(): verb2Len[verb2Int[k]] = v
@@ -342,9 +345,9 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   torch.save(verb2Int, "%s_verb2Int" % trainLoc)
   torch.save(verb2Len, "%s_verb2Len" % trainLoc)
 
-  print "verb2Int size: %d" % len(verb2Int)
-  print "role2int size: %d" % len(role2Int)
-  print "noun2Int size: %d" % len(noun2Int)
+  logging.getLogger(__name__).info("verb2Int size: %d" % len(verb2Int))
+  logging.getLogger(__name__).info("role2int size: %d" % len(role2Int))
+  logging.getLogger(__name__).info("noun2Int size: %d" % len(noun2Int))
 
   imToFeatures = { name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
   imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
@@ -360,18 +363,18 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
 
   if mode != "all":
     img_semchange = {}
-    for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
-      if i % 10000 == 10000-1:
-        print "iteration %d of %d" % (i, len(vrnData))
+    for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
+      #if i % 10000 == 10000-1:
+      # print "iteration %d of %d" % (i, len(vrnData))
       key = (im2Name, str(tRole), noun2)
       if key not in img_semchange: img_semchange[key] = []
       img_semchange[key].append( (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) )
       
     vrnData = []
     i = 0
-    for (k, v) in img_semchange.items():
+    for (k, v) in tqdm.tqdm(img_semchange.items(), total=len(img_semchange)):
       i+=1
-      print "i = {0} / {1}".format(i, len(img_semchange))
+      #print "i = {0} / {1}".format(i, len(img_semchange))
       ftgt = imToFeatures[k[0]]
       if mode == "max":
         mv = float('inf')
@@ -382,9 +385,9 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
             mv = d
             best = _item
         vrnData.append(best)
-  for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in enumerate(vrnData):
-		if i % 10000 == 10000-1:
-			print "iteration %d of %d" % (i, len(vrnData))
+  for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
+		#if i % 10000 == 10000-1:
+		#	print "iteration %d of %d" % (i, len(vrnData))
 		anitems = [] 
 		for (k,v) in an1.items():
 			rid = role2Int[make_tuple(k)]
