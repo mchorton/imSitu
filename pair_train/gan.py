@@ -39,6 +39,8 @@ class NetD(nn.Module):
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
 
+    self.dropout = 0.
+
     logging.getLogger(__name__).info("Building Discriminator network")
     logging.getLogger(__name__).info("--> Input size: %d" % (inputSize + ydataLength))
   def forward(self, x, y, train=False):
@@ -51,7 +53,7 @@ class NetD(nn.Module):
     mapped_cv = self.ymap(torch.cat(context_vectors, 1))
     x = torch.cat([x] + [mapped_cv], 1)
 
-    x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
+    x = F.dropout(F.leaky_relu(self.input_layer(x)), p=self.dropout, training=train)
     for i in range(0, len(self.hidden_layers)):
       x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train)
       if i == 0: x_prev = x
@@ -105,11 +107,10 @@ class NetG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=32):
+def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=32, epochs=5):
   # Set up variables.
   real_label = 1
   fake_label = 0
-  epochs = 5
   beta1=0.9999
   role2Int = torch.load("%s_role2Int" % datasetFileName)
   noun2Int = torch.load("%s_noun2Int" % datasetFileName)
@@ -138,8 +139,8 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
   optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
   optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
 
-  for epoch in tqdm.tqdm(range(epochs), total=epochs, desc="Epoch progress"):
-    for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Epoch progress", leave=False):
+  for epoch in tqdm.tqdm(range(epochs), total=epochs, desc="Epochs completed: "):
+    for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: ", leave=False):
       # Update D network
       netD.zero_grad()
       xdata, ydata = data
@@ -147,9 +148,10 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
       xdata, ydata = ag.Variable(xdata.cuda(gpu_id)), ag.Variable(ydata.cuda(gpu_id))
       output = netD(xdata, ydata, True) # TODO I think some of these calls for output should *NOT* use train=True
       label.data.fill_(real_label)
-      errD_real = criterion(output.view(-1), label[:len(output)])
+      errD_real = criterion(output.view(-1), label[:len(output)])  # TODO try adding the similarity score in here.
       errD_real.backward()
       D_x = output.data.mean()
+      # D_x is how many of the images (all of which were real) were identified as real.
 
       noise.data.normal_(0, 1)
       fake = netG(noise[:len(ydata)], ydata, True)
@@ -158,16 +160,19 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
       errD_fake = criterion(output, label[:len(output)])
       errD_fake.backward()
       D_G_z1 = output.data.mean()
+      # D_G_z1 is how many of the images (all of which were fake) were identified as real.
       errD = errD_real + errD_fake
       optimizerD.step()
 
       # Update G network
       netG.zero_grad()
       label.data.fill_(real_label)
-      output = netD(fake, ydata, True)
+      # TODO why is new output taken? Why do we use values from updated discriminator? Kind of makes sense...
+      output = netD(fake, ydata, True) # TODO I called fake.detach()... ? What does that do?
       errG = criterion(output, label[:len(output)])
       errG.backward()
       D_G_z2 = output.data.mean()
+      # D_G_z2 is how many of the images (all of which were fake) were identified as real, AFTER the discriminator update.
       optimizerG.step()
       if i % logPer == logPer - 1:
         tqdm.tqdm.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
@@ -175,3 +180,8 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
                      errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
   torch.save((netD, netG), ganFileName)
+
+# TODO:
+# 1. You're probably not using gan-style data...? Womp womp...
+# 2. Make code to turn a gan log into a graph.
+# 3. Take a folder with lines written to it, and display all .log graphs as HTML
