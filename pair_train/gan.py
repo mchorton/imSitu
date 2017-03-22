@@ -1,3 +1,4 @@
+from __future__ import print_function
 # Training the image transformation logic using a neural network.
 import json
 import torch.nn as nn
@@ -12,6 +13,9 @@ import time
 from ast import literal_eval as make_tuple
 import utils.mylogger as logging
 import pair_train.nn as pairnn
+#from tqdm import tqdm
+import tqdm
+import sys
 
 def makeGanDataTest():
   logging.getLogger(__name__).info("Making GAN data")
@@ -101,13 +105,11 @@ class NetG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7):
+def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=32):
   # Set up variables.
   real_label = 1
   fake_label = 0
-  logPer = 100
   epochs = 5
-  batchSize = 128
   beta1=0.9999
   role2Int = torch.load("%s_role2Int" % datasetFileName)
   noun2Int = torch.load("%s_noun2Int" % datasetFileName)
@@ -136,8 +138,8 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
   optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
   optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
 
-  for epoch in range(epochs):
-    for i, data in enumerate(dataloader, 0):
+  for epoch in tqdm.tqdm(range(epochs), total=epochs, desc="Epoch progress"):
+    for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Epoch progress", leave=False):
       # Update D network
       netD.zero_grad()
       xdata, ydata = data
@@ -168,7 +170,7 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
       D_G_z2 = output.data.mean()
       optimizerG.step()
       if i % logPer == logPer - 1:
-        logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+        tqdm.tqdm.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                   % (epoch, epochs, i, len(dataloader),
                      errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
