@@ -33,7 +33,8 @@ REGFEATDIR = "data/regression_fc7/"
 def getContextVectors(contextVREmbedding, contextWordEmbedding, context, batchSize):
   context_vectors = []
   for i in range(6):
-    context_vectors.append(contextVREmbedding(context[:,2*i].long()).view(batchSize, -1))
+    emb = contextVREmbedding(context[:,2*i].long()).view(batchSize, -1)
+    context_vectors.append(emb)
     context_vectors.append(contextWordEmbedding(context[:,1 + 2*i].long()).view(batchSize,-1))
   return context_vectors
 
@@ -268,6 +269,10 @@ def makeAllData():
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False):
+  if ganStyle:
+    ganString = "_gs_True"
+    trainLoc += ganString
+    devLoc += ganString
   logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
   # prep_work
   vrnData = json.load(open(vrndatafile))
@@ -406,7 +411,6 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
 		else:
 			x = list(imToFeatures[im1Name])
 			y = list(indexes) + [score]
-		#print str(x[0:4]) + " , " + str(y[0]) + "," + str(y[-1])
 		if im1Name in whitelistedImgNames:
 			xData.append(x)
 			yData.append(y)

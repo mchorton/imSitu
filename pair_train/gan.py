@@ -1,4 +1,3 @@
-from __future__ import print_function
 # Training the image transformation logic using a neural network.
 import json
 import torch.nn as nn
@@ -16,6 +15,7 @@ import pair_train.nn as pairnn
 #from tqdm import tqdm
 import tqdm
 import sys
+import os
 
 def makeGanDataTest():
   logging.getLogger(__name__).info("Making GAN data")
@@ -71,7 +71,8 @@ class NetG(nn.Module):
     super(NetG, self).__init__()
     ydataLength = 6 * wESize + 6 * vrESize
     effectiveYSize = 20
-    self.input_layer = nn.Linear(inputSize + effectiveYSize, hiddenSize)
+    self.inputSize = inputSize
+    self.input_layer = nn.Linear(self.inputSize + effectiveYSize, hiddenSize)
     self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
     self.output = nn.Linear(hiddenSize, outputSize)
 
@@ -80,15 +81,19 @@ class NetG(nn.Module):
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
     logging.getLogger(__name__).info("Building Generator network")
-    logging.getLogger(__name__).info("--> Input size: %d" % (inputSize + ydataLength))
+    logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + ydataLength))
   def forward(self, x, y, train=False):
     """
-    x - the image features
+    x - the image noise
     y - the image labels, and the similarity score
     """
+    assert(len(x) == len(y)), "invalid len(x)=%d, len(y)=%d" % (len(x), len(y))
+    assert(len(x[0]) == self.inputSize), "invalid len(x[0])=%d, expect %d" % (len(x[0]), self.inputSize)
+    assert(len(y[0]) == 13), "invalid len(y[0])=%d, expect 13" % (len(y[0]))
     context = y[:,:12] # Everything except the similarity score
     context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
-    mapped_cv = self.ymap(torch.cat(context_vectors, 1))
+    catted = torch.cat(context_vectors, 1)
+    mapped_cv = self.ymap(catted)
     x = torch.cat([x] + [mapped_cv], 1)
 
     x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
@@ -107,7 +112,7 @@ class NetG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=32, epochs=5):
+def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=128, epochs=5, saveDir=None, savePerEpoch=5):
   # Set up variables.
   real_label = 1
   fake_label = 0
@@ -139,6 +144,13 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
   optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
   optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
 
+  if saveDir is not None:
+    if os.path.exists(saveDir):
+      logging.getLogger(__name__).info("Save directory %s already exists; cowardly exiting..." % saveDir)
+      sys.exit(1)
+    os.makedirs(saveDir)
+
+  logging.getLogger(__name__).info("Beginning training")
   for epoch in tqdm.tqdm(range(epochs), total=epochs, desc="Epochs completed: "):
     for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: ", leave=False):
       # Update D network
@@ -178,10 +190,61 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain", ganFileName = "dat
         tqdm.tqdm.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                   % (epoch, epochs, i, len(dataloader),
                      errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
+    # save the training files
+    if saveDir is not None and epoch % savePerEpoch == (savePerEpoch - 1):
+      checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganFileName), epoch)
+      logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
+      torch.save((netD, netG), os.path.join(saveDir, checkpointName))
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
   torch.save((netD, netG), ganFileName)
 
-# TODO:
-# 1. You're probably not using gan-style data...? Womp womp...
-# 2. Make code to turn a gan log into a graph.
-# 3. Take a folder with lines written to it, and display all .log graphs as HTML
+def evaluateGANModel(ganModelFile, datasetFileName):
+  batchSize=512
+  nz = 100
+  """
+  Evaluate a GAN model generator's image creation ability in a simple way.
+  """
+  netD, netG = torch.load(ganModelFile)
+  netG = netG.cuda()
+  netD = netD.cuda()
+  dataset = torch.load(datasetFileName)
+  # This dataset needs to be a regular-style dataset, not a gan-style one.
+  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=True, num_workers=4)
+  criterion = nn.MSELoss()
+  runningTrue = 0.
+  runningGimpy = 0.
+  noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda())
+  for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: "):
+    expectedDataSize = 12 + 3 + 1024
+    assert(len(data[0][0]) == expectedDataSize), "expected len(data[0][0])=%d to be %d" % (len(data[0][0]), expectedDataSize)
+    expectedYDataSize = 1024 + 1
+    assert(len(data[1][0]) == expectedYDataSize), "expected len(data[0][0])=%d to be %d" % (len(data[1][0]), expectedYDataSize)
+    # 1. No labels on generator. Calculate square loss.
+    xdata, featuresAndScore = data
+    conditionalData = xdata[:,:12].cuda()
+    scores = featuresAndScore[:,-1].cuda().contiguous().view(-1, 1)
+    conditionalData = torch.cat([conditionalData, scores], 1)
+    noise.data.normal_(0, 1)
+    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()))
+    expectedFeatures = xdata[:,12 + 3:].cuda().contiguous()
+    scores = scores.view(len(scores), 1).expand(output.size())
+
+    firstPiece = torch.mul(output.data, scores)
+    secondPiece = torch.mul(expectedFeatures, scores)
+    correctLoss = criterion(
+        ag.Variable(firstPiece, requires_grad=False), 
+        ag.Variable(secondPiece, requires_grad=False))
+
+    scores = featuresAndScore[:,-1].cuda().contiguous().view(-1, 1)
+    conditionalData = torch.zeros([len(conditionalData), 12]).cuda()
+    conditionalData = torch.cat([conditionalData, scores], 1)
+    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()))
+    scores = scores.view(len(scores), 1).expand(output.size())
+    gimpyLoss = criterion(
+        ag.Variable(torch.mul(output.data, scores)), 
+        ag.Variable(torch.mul(expectedFeatures, scores)))
+
+    runningTrue += correctLoss.data[0]
+    runningGimpy += gimpyLoss.data[0]
+  logging.getLogger(__name__).info("True   Loss: %.4f" % runningTrue)
+  logging.getLogger(__name__).info("zerodY Loss: %.4f" % runningGimpy)

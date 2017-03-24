@@ -45,8 +45,8 @@ def makeFullGANGraph(infile):
   import plotutils as pu
   data = pandas.read_csv(infile)
 
-  pu.makeNPlot(data["Epoch"], [data["D_Loss"], data["G_Loss"], data["D(x)"], data["D(G(z))_1"]], ["D Loss", "G Loss", "D(x)", "D(G(z))"], "CGAN Loss", "Epoch", "Loss", "linear", "linear", outfile, 25, 25, 2, 5)
-  pu.makeNPlot(data["Epoch"], [data["D_Loss"], data["G_Loss"], data["D(x)"], data["D(G(z))_1"]], ["D Loss", "G Loss", "D(x)", "D(G(z))"], "CGAN Loss", "Epoch", "Loss", "linear", "linear", other_outfile, 25, 25, 2, 5)
+  pu.makeNPlot(data["Epoch"], [data["D_Loss"], data["G_Loss"], data["D(x)"], data["D(G(z))_1"]], ["D Loss", "G Loss", "D(x)", "D(G(z))"], "CGAN Loss", "Epoch", "Loss", "linear", "linear", outfile, 10, 10, 1, 1)
+  pu.makeNPlot(data["Epoch"], [data["D_Loss"], data["G_Loss"], data["D(x)"], data["D(G(z))_1"]], ["D Loss", "G Loss", "D(x)", "D(G(z))"], "CGAN Loss", "Epoch", "Loss", "linear", "linear", other_outfile, 10, 10, 1, 1)
 
 if __name__ == '__main__':
   import sys
