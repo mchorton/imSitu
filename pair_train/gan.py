@@ -214,6 +214,7 @@ def evaluateGANModel(ganModelFile, datasetFileName):
   runningTrue = 0.
   runningGimpy = 0.
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda())
+  datasetSize = 0.
   for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: "):
     expectedDataSize = 12 + 3 + 1024
     assert(len(data[0][0]) == expectedDataSize), "expected len(data[0][0])=%d to be %d" % (len(data[0][0]), expectedDataSize)
@@ -229,11 +230,9 @@ def evaluateGANModel(ganModelFile, datasetFileName):
     expectedFeatures = xdata[:,12 + 3:].cuda().contiguous()
     scores = scores.view(len(scores), 1).expand(output.size())
 
-    firstPiece = torch.mul(output.data, scores)
-    secondPiece = torch.mul(expectedFeatures, scores)
     correctLoss = criterion(
-        ag.Variable(firstPiece, requires_grad=False), 
-        ag.Variable(secondPiece, requires_grad=False))
+        ag.Variable(torch.mul(output.data, scores), requires_grad=False), 
+        ag.Variable(torch.mul(expectedFeatures, scores), requires_grad=False))
 
     scores = featuresAndScore[:,-1].cuda().contiguous().view(-1, 1)
     conditionalData = torch.zeros([len(conditionalData), 12]).cuda()
@@ -244,7 +243,12 @@ def evaluateGANModel(ganModelFile, datasetFileName):
         ag.Variable(torch.mul(output.data, scores)), 
         ag.Variable(torch.mul(expectedFeatures, scores)))
 
-    runningTrue += correctLoss.data[0]
-    runningGimpy += gimpyLoss.data[0]
+    batchSize = len(conditionalData)
+    datasetSize += batchSize
+
+    runningTrue += correctLoss.data[0] * batchSize
+    runningGimpy += gimpyLoss.data[0] * batchSize
+  runningTrue /= datasetSize
+  runningGimpy /= datasetSize
   logging.getLogger(__name__).info("True   Loss: %.4f" % runningTrue)
   logging.getLogger(__name__).info("zerodY Loss: %.4f" % runningGimpy)
