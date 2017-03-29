@@ -126,10 +126,12 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
   nWords = max(noun2Int.values()) + 1
   wESize = 128
   vrESize = 128
-  depth = 2
-  genDepth = 2
 
   gdropout = kwargs.get("gdropout", 0.)
+  depth = kwargs.get("depth", 2)
+  genDepth = kwargs.get("genDepth", 2)
+  decayPer = kwargs.get("decayPer", 10)
+  decayRate = kwargs.get("decayRate", 0.5)
 
   # Load variables, begin training.
   dataset = torch.load(datasetFileName)
@@ -209,12 +211,22 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
         logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                   % (epoch, epochs, i, len(dataloader),
                      errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
-        logging.getLogger(__name__).info('L1: %.4f' % errG_L1.data[0])
+        
     # save the training files
     if saveDir is not None and epoch % savePerEpoch == (savePerEpoch - 1):
       checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganFileName), epoch)
       logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
       torch.save((netD, netG), os.path.join(saveDir, checkpointName))
+
+    if i % decayPer == decayPer - 1:
+      for param_group in optimizerG.param_groups:
+        logging.getLogger(__name__).info("optG: prev rate: %.4f" % param_group['lr'])
+        param_group['lr'] = param_group['lr'] * decayRate
+        logging.getLogger(__name__).info("optG: new  rate: %.4f" % param_group['lr'])
+      for param_group in optimizerD.param_groups:
+        logging.getLogger(__name__).info("optD: prev rate: %.4f" % param_group['lr'])
+        param_group['lr'] = param_group['lr'] * decayRate
+        logging.getLogger(__name__).info("optD: new  rate: %.4f" % param_group['lr'])
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
   torch.save((netD, netG), ganFileName)
 
