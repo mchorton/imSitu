@@ -67,7 +67,7 @@ class NetD(nn.Module):
     return x
 
 class NetG(nn.Module):
-  def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
+  def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize, dropout=0.):
     super(NetG, self).__init__()
     ydataLength = 6 * wESize + 6 * vrESize
     effectiveYSize = 20
@@ -75,6 +75,7 @@ class NetG(nn.Module):
     self.input_layer = nn.Linear(self.inputSize + effectiveYSize, hiddenSize)
     self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
     self.output = nn.Linear(hiddenSize, outputSize)
+    self.dropout = dropout
 
     self.ymap = nn.Linear(ydataLength, effectiveYSize)
 
@@ -82,37 +83,38 @@ class NetG(nn.Module):
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
     logging.getLogger(__name__).info("Building Generator network")
     logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + ydataLength))
-  def forward(self, x, y, train=False):
+  def forward(self, x, y, train=False, ignoreNoise=False):
     """
     x - the image noise
     y - the image labels, and the similarity score
     """
-    assert(len(x) == len(y)), "invalid len(x)=%d, len(y)=%d" % (len(x), len(y))
-    assert(len(x[0]) == self.inputSize), "invalid len(x[0])=%d, expect %d" % (len(x[0]), self.inputSize)
+    if not ignoreNoise:
+      assert(len(x) == len(y)), "invalid len(x)=%d, len(y)=%d" % (len(x), len(y))
+      assert(len(x[0]) == self.inputSize), "invalid len(x[0])=%d, expect %d" % (len(x[0]), self.inputSize)
     assert(len(y[0]) == 13), "invalid len(y[0])=%d, expect 13" % (len(y[0]))
     context = y[:,:12] # Everything except the similarity score
     context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
     catted = torch.cat(context_vectors, 1)
-    mapped_cv = self.ymap(catted)
-    x = torch.cat([x] + [mapped_cv], 1)
+    toCat = [self.ymap(catted)]
+    if not ignoreNoise:
+      toCat = [x] + toCat
+    x = torch.cat(toCat, 1)
 
-    x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train) 
+    x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train, p=self.dropout) 
     for i in range(0, len(self.hidden_layers)):
-      x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train)
+      x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train, p=self.dropout)
       if i == 0: x_prev = x
       #add skip connections for depth
       if i > 0 and i % 2 == 0: 
         x = x + x_prev
         x_prev = x
-    #x = F.dropout(F.relu(self.hidden2(x)), training=train)
-    #x = F.dropout(F.relu(self.hidden3(x)), training=train)
     x = self.output(x)
     return x
 
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=128, epochs=5, saveDir=None, savePerEpoch=5):
+def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=0.5, nz=100, hiddenSize=1024, **kwargs):
   # Set up variables.
   real_label = 1
   fake_label = 0
@@ -124,25 +126,30 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
   nWords = max(noun2Int.values()) + 1
   wESize = 128
   vrESize = 128
-  hiddenSize = 4096
   depth = 2
-  genDepth = 1
-  nz = 100
+  genDepth = 2
+
+  gdropout = kwargs.get("gdropout", 0.)
 
   # Load variables, begin training.
   dataset = torch.load(datasetFileName)
-  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=True, num_workers=4)
+  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False, num_workers=4)
   
   xSize = dataset[0][0].size(0)
   assert(xSize == 1024), "Invalid dataset dimensions!"
 
   netD = NetD(xSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
-  netG = NetG(nz, xSize, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
+  netG = NetG(nz, xSize, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize, gdropout).cuda(gpu_id)
   criterion = nn.BCELoss().cuda()
+  l1Criterion = nn.L1Loss().cuda()
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
   label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
-  optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
-  optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
+  # TODO for now, sgd
+  #optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
+  #optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
+  optimizerD = optim.SGD(netD.parameters(), lr=lr)
+  optimizerG = optim.SGD(netG.parameters(), lr=lr)
+  ignoreNoise = True if nz < 1 else False
 
   if saveDir is not None:
     if os.path.exists(saveDir):
@@ -158,17 +165,18 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
       xdata, ydata = data
 
       xdata, ydata = ag.Variable(xdata.cuda(gpu_id)), ag.Variable(ydata.cuda(gpu_id))
-      output = netD(xdata, ydata, True) # TODO I think some of these calls for output should *NOT* use train=True
+      output = netD(xdata, ydata, True)
       label.data.fill_(real_label)
-      errD_real = criterion(output.view(-1), label[:len(output)])  # TODO try adding the similarity score in here.
+      # TODO try adding the similarity score in here.
+      errD_real = criterion(output.view(-1), label[:len(output)]) 
       errD_real.backward()
       D_x = output.data.mean()
       # D_x is how many of the images (all of which were real) were identified as real.
 
       noise.data.normal_(0, 1)
-      fake = netG(noise[:len(ydata)], ydata, True)
+      fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise)
       label.data.fill_(fake_label)
-      output = netD(fake.detach(), ydata, True)
+      output = netD(fake, ydata, True)
       errD_fake = criterion(output, label[:len(output)])
       errD_fake.backward()
       D_G_z1 = output.data.mean()
@@ -177,19 +185,31 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
       optimizerD.step()
 
       # Update G network
+      noise.data.normal_(0, 1)
       netG.zero_grad()
+      fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise)
       label.data.fill_(real_label)
-      # TODO why is new output taken? Why do we use values from updated discriminator? Kind of makes sense...
-      output = netD(fake, ydata, True) # TODO I called fake.detach()... ? What does that do?
+      output = netD(fake, ydata, True)
       errG = criterion(output, label[:len(output)])
       errG.backward()
       D_G_z2 = output.data.mean()
       # D_G_z2 is how many of the images (all of which were fake) were identified as real, AFTER the discriminator update.
+
+      fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise)
+      errG_L1 = l1Criterion(
+          torch.mul(fake, lam),
+          torch.mul(xdata, lam))
+      errG_L1.backward()
       optimizerG.step()
+
       if i % logPer == logPer - 1:
         tqdm.tqdm.write('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
                   % (epoch, epochs, i, len(dataloader),
                      errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2))
+        logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
+                  % (epoch, epochs, i, len(dataloader),
+                     errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
+        logging.getLogger(__name__).info('L1: %.4f' % errG_L1.data[0])
     # save the training files
     if saveDir is not None and epoch % savePerEpoch == (savePerEpoch - 1):
       checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganFileName), epoch)
@@ -199,12 +219,15 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
   torch.save((netD, netG), ganFileName)
 
 def evaluateGANModel(ganModelFile, datasetFileName):
-  batchSize=512
-  nz = 100
+  batchSize=16
   """
   Evaluate a GAN model generator's image creation ability in a simple way.
   """
   netD, netG = torch.load(ganModelFile)
+
+  nz = netG.inputSize
+  ignoreNoise = True if nz < 1 else False
+
   netG = netG.cuda()
   netD = netD.cuda()
   dataset = torch.load(datasetFileName)
@@ -226,7 +249,7 @@ def evaluateGANModel(ganModelFile, datasetFileName):
     scores = featuresAndScore[:,-1].cuda().contiguous().view(-1, 1)
     conditionalData = torch.cat([conditionalData, scores], 1)
     noise.data.normal_(0, 1)
-    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()))
+    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()), False, ignoreNoise)
     expectedFeatures = xdata[:,12 + 3:].cuda().contiguous()
     scores = scores.view(len(scores), 1).expand(output.size())
 
@@ -237,7 +260,7 @@ def evaluateGANModel(ganModelFile, datasetFileName):
     scores = featuresAndScore[:,-1].cuda().contiguous().view(-1, 1)
     conditionalData = torch.zeros([len(conditionalData), 12]).cuda()
     conditionalData = torch.cat([conditionalData, scores], 1)
-    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()))
+    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda()), False, ignoreNoise)
     scores = scores.view(len(scores), 1).expand(output.size())
     gimpyLoss = criterion(
         ag.Variable(torch.mul(output.data, scores)), 
