@@ -273,6 +273,8 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False)
     ganString = "_gs_True"
     trainLoc += ganString
     devLoc += ganString
+  trainLoc += "_mode_%s" % mode
+  devLoc += "_mode_%s" % mode
   logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
   # prep_work
   vrnData = json.load(open(vrndatafile))
@@ -308,6 +310,9 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   ...
   ganStyle - if True, this function will generate a dataset usable for our GAN
              instead of for the original pair generation network
+  mode - if "max", a unique (im2Name, str(tRole), noun2) will only allow a
+         single im1Name to be paired with it.
+
   """
   # Split it into lists of the roles, noun1, noun2, verb
   scores = [pt[0] for pt in vrnData]
