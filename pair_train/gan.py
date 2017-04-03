@@ -18,6 +18,7 @@ import tqdm
 import sys
 import os
 import collections
+import copy
 
 def makeGanDataTest():
   logging.getLogger(__name__).info("Making GAN data")
@@ -25,7 +26,7 @@ def makeGanDataTest():
 
 def makeGanData():
   logging.getLogger(__name__).info("Making GAN data")
-  pairnn.makeData("data/models/nngandataTrain", "data/models/nngandataDev", pairnn.COMPFEATDIR, pairnn.VRNDATA, ganStyle=True)
+  pairnn.makeData("data/models/nngandataTrain", "data/models/nngandataDev", pairnn.COMPFEATDIR, pairnn.VRNDATA, style="gan")
 
 class NetD(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
@@ -85,20 +86,19 @@ class NetG(nn.Module):
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
     logging.getLogger(__name__).info("Building Generator network")
     logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + ydataLength))
-  def forward(self, x, y, train=False, ignoreNoise=False, ignoreCond=False):
+  def forward(self, x, y, train=False, ignoreCond=False):
     """
     x - the image noise
     y - the image labels, and the similarity score
     """
-    # TODO
     ignoreNoise = True if self.inputSize < 1 else False
+    assert(len(x) == len(y)), "invalid len(x)=%d, len(y)=%d" % (len(x), len(y))
     if not ignoreNoise:
-      assert(len(x) == len(y)), "invalid len(x)=%d, len(y)=%d" % (len(x), len(y))
       assert(len(x[0]) == self.inputSize), "invalid len(x[0])=%d, expect %d" % (len(x[0]), self.inputSize)
     assert(len(y[0]) == 13 or len(y[0]) == 12), "invalid len(y[0])=%d, expect 12 or 13" % (len(y[0]))
     context = y[:,:12] # Everything except the similarity score
     if ignoreCond:
-      # TODO this is a bit scary; this will destroy my data in the caller? :( TODO should copy?
+      context = context.clone()
       context.data.fill_(0)
     context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
     catted = torch.cat(context_vectors, 1)
@@ -157,12 +157,8 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
   l1Criterion = nn.L1Loss().cuda(gpu_id)
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
   label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
-  # TODO for now, sgd
-  #optimizerD = optim.Adam(netD.parameters(), lr=lr, betas = (beta1, 0.999))
-  #optimizerG = optim.Adam(netG.parameters(), lr=lr, betas = (beta1, 0.999))
   optimizerD = optim.SGD(netD.parameters(), lr=lr)
   optimizerG = optim.SGD(netG.parameters(), lr=lr)
-  ignoreNoise = True if nz < 1 else False
 
   if saveDir is not None:
     if os.path.exists(saveDir):
@@ -186,7 +182,6 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
         scores = ydata[:,12]
         output = netD(xdata, ydata, True)
         label.data.fill_(real_label)
-        # TODO try adding the similarity score in here.
         errD_real = criterion(
             torch.mul(output.view(-1), scores),
             torch.mul(label[:len(output)], scores))
@@ -195,7 +190,7 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
         # D_x is how many of the images (all of which were real) were identified as real.
 
         noise.data.normal_(0, 1)
-        fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise, ignoreCond=ignoreCond)
+        fake = netG(noise[:len(ydata)], ydata, True, ignoreCond=ignoreCond)
         label.data.fill_(fake_label)
         output = netD(fake, ydata, True)
         errD_fake = criterion(
@@ -211,7 +206,7 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
         # Update G network
         noise.data.normal_(0, 1)
         netG.zero_grad()
-        fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise, ignoreCond=ignoreCond)
+        fake = netG(noise[:len(ydata)], ydata, True, ignoreCond=ignoreCond)
         label.data.fill_(real_label)
         output = netD(fake, ydata, True)
         errG = criterion(
@@ -221,7 +216,7 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
         D_G_z2 = output.data.mean()
         # D_G_z2 is how many of the images (all of which were fake) were identified as real, AFTER the discriminator update.
 
-        fake = netG(noise[:len(ydata)], ydata, True, ignoreNoise=ignoreNoise, ignoreCond=ignoreCond)
+        fake = netG(noise[:len(ydata)], ydata, True, ignoreCond=ignoreCond)
         resizescores = scores.contiguous().view(-1, 1).expand(fake.size())
         errG_L1 = l1Criterion(
             torch.mul(torch.mul(fake, lam), resizescores),
@@ -264,7 +259,6 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
   netD, netG = torch.load(ganModelFile)
 
   nz = netG.inputSize
-  ignoreNoise = True if nz < 1 else False
 
   netG = netG.cuda(gpu_id)
   netD = netD.cuda(gpu_id)
@@ -287,7 +281,7 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
     scores = featuresAndScore[:,-1].cuda(gpu_id).contiguous().view(-1, 1)
     conditionalData = torch.cat([conditionalData, scores], 1)
     noise.data.normal_(0, 1)
-    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id)), False, ignoreNoise, ignoreCond=False)
+    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id), volatile=True), False, ignoreCond=False)
     expectedFeatures = xdata[:,12 + 3:].cuda(gpu_id).contiguous()
     scores = scores.view(len(scores), 1).expand(output.size())
 
@@ -295,26 +289,12 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
         ag.Variable(torch.mul(output.data, scores), requires_grad=False), 
         ag.Variable(torch.mul(expectedFeatures, scores), requires_grad=False))
 
-    """
-    scores = featuresAndScore[:,-1].cuda(gpu_id).contiguous().view(-1, 1)
-    conditionalData = torch.zeros([len(conditionalData), 12]).cuda(gpu_id)
-    conditionalData = torch.cat([conditionalData, scores], 1)
-    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id)), False, ignoreNoise)
-    scores = scores.view(len(scores), 1).expand(output.size())
-    gimpyLoss = criterion(
-        ag.Variable(torch.mul(output.data, scores)), 
-        ag.Variable(torch.mul(expectedFeatures, scores)))
-    """
-
     batchSize = len(conditionalData)
     datasetSize += batchSize
 
     runningTrue += correctLoss.data[0] * batchSize
-    #runningGimpy += gimpyLoss.data[0] * batchSize
   runningTrue /= datasetSize
-  #runningGimpy /= datasetSize
   logging.getLogger(__name__).info("True   Loss: %.4f" % runningTrue)
-  #logging.getLogger(__name__).info("zerodY Loss: %.4f" % runningGimpy)
 
 class GanDataLoader(object):
   def __init__(self, filename):
@@ -328,8 +308,7 @@ class GanDataLoader(object):
     assert(len(x) == 1024), "Invalid 'x' dimension '%d'" % len(x)
     assert(len(y) == 13), "Invalid 'y' dimension '%d'" % len(y)
 
-# TODO I'm leaving dropout on! On purpose (nondeterministic output)
-def getGANChimeras(netG, nTestPoints, yval, gpu_id=0):
+def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
   batchSize = 64
   out = []
   nz = netG.inputSize
@@ -339,24 +318,21 @@ def getGANChimeras(netG, nTestPoints, yval, gpu_id=0):
     noise.data.normal_(0, 1)
     if i * batchSize > nTestPoints:
       break
-    out = torch.cat(out + [netG(noise, yvar, True, ignoreNoise=False, ignoreCond=False)], 0)
+    out = torch.cat(out + [netG(noise, yvar, dropoutOn, ignoreCond=False)], 0)
     out = [out]
   return out[0]
 
-
 def parzenWindowCheck(ganModelFile, ganDevSet, **kwargs):
-  #assert(False)
   """
   TODO: I need to find out why the values are always nan or 0.
   1. Try more samples in the PDF? might not help...
   2. Check if 'y' values are unique; check multiplicity.
   3. Or, maybe the model is just bad...
   """
+  # Set up some values.
   gpu_id = kwargs.get("gpu_id", 2)
   logPer = kwargs.get("logPer", 1e12)
   bw_method = kwargs.get("bw_method", "scott")
-
-
   _, netG = torch.load(ganModelFile)
   netG = netG.cuda(gpu_id)
   gDiskDevLoader = GanDataLoader(ganDevSet)
@@ -364,122 +340,38 @@ def parzenWindowCheck(ganModelFile, ganDevSet, **kwargs):
   nTestSamples = kwargs.get("nTestSamples", 100)
   batchSize = kwargs.get("batchSize", 32)
   nz = netG.inputSize
-  ignoreNoise = True if nz < 1 else False
 
   # map from conditioned value to a list of datapoints that match that value.
   yValsToXpoints = collections.defaultdict(list)
-  # If this batchSize is not 1, we're fucked. TODO
+
+  # This batch_size must be one, because I don't iterate over ydata again.
   devDataLoader = torch.utils.data.DataLoader(gDiskDevLoader.data, batch_size=1, shuffle=True, num_workers=0)
   logging.getLogger(__name__).info("Testing dev data against parzen window fit")
   for i, data in tqdm.tqdm(enumerate(devDataLoader, 0), total=len(devDataLoader), desc="Iterations completed: "):
-    #logging.getLogger(__name__).info(i)
     if i >= nTestSamples:
-      #logging.getLogger(__name__).info("triggered break")
-      #logging.getLogger(__name__).info("batchSize, ")
       break
     xdata, ydata = data
     ydata = ydata[:,:12] # ignore score
     # xdata is 1x1024
     kde_input = torch.transpose(xdata, 0, 1).numpy()
-    #logging.getLogger(__name__).info(kde_input.shape)
     # kde_input is 1024x1
     yValsToXpoints[ydata].append(kde_input)
-  #logging.getLogger(__name__).info(yValsToXpoints)
 
   logging.getLogger(__name__).info(len(yValsToXpoints))
   agg = collections.defaultdict(int)
   for k, v in yValsToXpoints.iteritems():
-  #  # Oh wait, I bet I need to print the size or shape... TODO
-    #logging.getLogger(__name__).info("samps=%s" % str(len(v)))
     agg[len(v)] += 1
   logging.getLogger(__name__).info(agg)
 
-
-  #noise = ag.Variable(torch.FloatTensor(batchSize, nz), requires_grad=False).cuda(gpu_id)
   probs = {}
   for i, (yval, xlist) in tqdm.tqdm(enumerate(yValsToXpoints.iteritems()), total=len(yValsToXpoints)):
-    dataTensor = getGANChimeras(netG, nSamples, yval, gpu_id=gpu_id)
-    #logging.getLogger(__name__).info(dataTensor)
+    dataTensor = getGANChimeras(netG, nSamples, yval, gpu_id=gpu_id, dropoutOn=True if netG.inputSize < 1 else False)
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
     gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
     devData = np.concatenate(xlist, axis=1)
-    #logging.getLogger(__name__).info(devData.shape)
     probs[yval] = gpw.evaluate(devData)
     if i % logPer == (logPer - 1):
       logging.getLogger(__name__).info("number of x points: %d" % len(xlist))
       logging.getLogger(__name__).info("prob sample: %s" % repr(probs[yval]))
 
-  logging.getLogger(__name__).info("Y data probs blah")
-
   return probs
-
-
-
-
-  ###################### MAGINOT LINE
-  """
-
-    noise.data.normal_(0, 1)
-
-    samples.append(netG(noise[:len(xdata)], ydata, False, ignoreNoise=ignoreNoise))
-
-    
-
-    logging.getLogger(__name__).info("Getting xdata")
-    xdata = ag.Variable(xdata, requires_grad=False)
-    logging.getLogger(__name__).info("Transposing")
-    logging.getLogger(__name__).info("Calculating/appending")
-    probs += list(gpw.evaluate_log(kde_input))
-  # Get all 'y' samples from which to generate the distributions.
-
-
-  samples = []
-  # Generate samples to train the parzen window estimator
-  trainDataLoader = torch.utils.data.DataLoader(gDiskTrainLoader.data, batch_size=batchSize, shuffle=True, num_workers=4)
-  logging.getLogger(__name__).info("Generating Parzen window samples")
-  counts = collections.defaultdict(int) # TODO
-  tot = 0
-  for i, data in tqdm.tqdm(enumerate(trainDataLoader, 0), total=len(trainDataLoader), desc="Iterations completed: "):
-    #if batchSize * i >= nSamples:
-    #  break
-    xdata, ydata = data
-    xdata, ydata = ag.Variable(xdata, requires_grad=False).cuda(gpu_id), ag.Variable(ydata, requires_grad=False).cuda(gpu_id)
-    for elem in ydata:
-      counts[elem] += 1
-      tot += 1
-    continue
-    noise.data.normal_(0, 1)
-    #logging.getLogger(__name__).info(xdata.size())
-    #logging.getLogger(__name__).info(ydata.size())
-    samples.append(netG(noise[:len(xdata)], ydata, False, ignoreNoise=ignoreNoise))
-  # 'samples' is a list of tensors [N, d=1024]
-  agg = collections.defaultdict(int)
-  for k,v in counts.iteritems():
-    agg[v] += 1
-  logging.getLogger(__name__).info("GaussianParzenWindow function doesn't work. quitting...")
-  import sys
-  sys.exit(1)
-
-  logging.getLogger(__name__).info("agg=%s" % str(agg))
-  logging.getLogger(__name__).info("total=%d" % tot)
-
-  samples = torch.cat(samples, 0)
-  logging.getLogger(__name__).info(samples.size())
-  kde_input = torch.transpose(samples, 0, 1).data.cpu().numpy()
-  import utils.kde_hack as ss
-  logging.getLogger(__name__).info(kde_input)
-  
-  logging.getLogger(__name__).info("Fitting Parzen window")
-  gpw = ss.gaussian_kde(kde_input, bw_method=1e14)
-  # TODO just look at his internals...
-  #logging.getLogger(__name__).info(gpw(kde_input))
-  #exit(1)
-  #gpw(kde_input)
-
-  # Get the dev set data
-  # TODO also try the training set?
-  logging.getLogger(__name__).info("A few probs: %s... " % str(probs)[:30])
-  logging.getLogger(__name__).info(str(probs[0]))
-  logging.getLogger(__name__).info(repr(probs[0]))
-  logging.getLogger(__name__).info("Average Prob: %.8f" % (sum(probs) / (1. * len(probs))))
-  """

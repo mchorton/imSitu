@@ -13,6 +13,7 @@ from ast import literal_eval as make_tuple
 import math
 import utils.mylogger as logging
 import tqdm
+import collections
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -268,13 +269,10 @@ def makeAllData():
   makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
-def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False):
-  if ganStyle:
-    ganString = "_gs_True"
-    trainLoc += ganString
-    devLoc += ganString
-  trainLoc += "_mode_%s" % mode
-  devLoc += "_mode_%s" % mode
+def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
+  extra = "style_%s_mode_%s" % (style, mode)
+  trainLoc += extra
+  devLoc += extra
   logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
   # prep_work
   vrnData = json.load(open(vrndatafile))
@@ -291,16 +289,16 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", ganStyle=False)
   logging.getLogger(__name__).info("Saving img names to %s" % devImgNameFile)
   json.dump(list(devImgNames), open(devImgNameFile, "w+"))
 
-  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames, mode=mode, ganStyle=ganStyle)
+  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames, mode=mode, style=style)
   logging.getLogger(__name__).info("Saving data to %s" % trainLoc)
   torch.save(dataSet, trainLoc)
 
-  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames, mode=mode, ganStyle=ganStyle)
+  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames, mode=mode, style=style)
   logging.getLogger(__name__).info("Saving data to %s" % devLoc)
   torch.save(dataSet, devLoc)
 
 # TODO refactor this a bit. Also, make some stability tests!
-def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all", ganStyle=False):
+def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all", style=""):
   """
   Create a pytorch TensorDataset at 'outFileName'. It contains input suitable
   for the models trained to generate image features.
@@ -308,8 +306,8 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
              function doesn't save the dataset, but it needs a pathname from
              which to generate intermediate file names)
   ...
-  ganStyle - if True, this function will generate a dataset usable for our GAN
-             instead of for the original pair generation network
+  style - "" (default), "trgan", "gan"
+          Dictates the output format of our dataset.
   mode - if "max", a unique (im2Name, str(tRole), noun2) will only allow a
          single im1Name to be paired with it.
 
@@ -395,30 +393,45 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
             mv = d
             best = _item
         vrnData.append(best)
+  allYs = collections.defaultdict(int) # TODO delete this.
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
-		#if i % 10000 == 10000-1:
-		#	print "iteration %d of %d" % (i, len(vrnData))
-		anitems = [] 
-		for (k,v) in an1.items():
-			rid = role2Int[make_tuple(k)]
-			nid = noun2Int[v]
-			anitems.append((rid,nid))
-		while len(anitems) < 6:
-			anitems.append((len(role2Int), len(noun2Int)))
-	 
-		anitems = sorted(anitems, key = lambda x : x[0]) 
-		indexes = []
-		for (k,v) in anitems: indexes += [k,v]
+    #if i % 10000 == 10000-1:
+    #  print "iteration %d of %d" % (i, len(vrnData))
+    anitems = [] 
+    for (k,v) in an1.items():
+      rid = role2Int[make_tuple(k)]
+      nid = noun2Int[v]
+      anitems.append((rid,nid))
+    while len(anitems) < 6:
+      anitems.append((len(role2Int), len(noun2Int)))
+   
+    anitems = sorted(anitems, key = lambda x : x[0]) 
+    indexes = []
+    for (k,v) in anitems: indexes += [k,v]
  
-		if not ganStyle:
-			x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
-			y = list(imToFeatures[im2Name]) + [score]
-		else:
-			x = list(imToFeatures[im1Name])
-			y = list(indexes) + [score]
-		if im1Name in whitelistedImgNames:
-			xData.append(x)
-			yData.append(y)
+    if style == "":
+      x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
+      y = list(imToFeatures[im2Name]) + [score]
+    elif style == "gan":
+      x = list(imToFeatures[im1Name])
+      y = list(indexes) + [score]
+      allYs[tuple(indexes)] += 1
+    elif style == "trgan":
+      x =  list(imToFeatures[im2Name]) 
+      y = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
+    else:
+      raise ValueError("invalid style '%s'" % style)
+
+
+    if im1Name in whitelistedImgNames:
+      xData.append(x)
+      yData.append(y)
+
+  agg = collections.defaultdict(int)
+  for k,v in allYs.iteritems():
+    agg[len(v)] += 1
+  logging.getLogger(__name__).info(agg)
+  return # TODO
 
   dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
   return dataSet
