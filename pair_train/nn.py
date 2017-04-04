@@ -270,7 +270,7 @@ def makeAllData():
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
-  extra = "style_%s_mode_%s" % (style, mode)
+  extra = "_style_%s_mode_%s" % (style, mode)
   trainLoc += extra
   devLoc += extra
   logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
@@ -394,6 +394,7 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
             best = _item
         vrnData.append(best)
   allYs = collections.defaultdict(int) # TODO delete this.
+  whiteYs = collections.defaultdict(int) # TODO delete this.
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
     #if i % 10000 == 10000-1:
     #  print "iteration %d of %d" % (i, len(vrnData))
@@ -409,31 +410,54 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
-    if style == "":
+    if style == "" or style == "trgan":
       x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
       y = list(imToFeatures[im2Name]) + [score]
     elif style == "gan":
       x = list(imToFeatures[im1Name])
       y = list(indexes) + [score]
       allYs[tuple(indexes)] += 1
-    elif style == "trgan":
-      x =  list(imToFeatures[im2Name]) 
-      y = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
     else:
       raise ValueError("invalid style '%s'" % style)
 
+    """
+    elif style == "trgan": TODO this will just use same style as ""
+      x =  list(imToFeatures[im2Name]) 
+      y = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
+    """
 
     if im1Name in whitelistedImgNames:
       xData.append(x)
       yData.append(y)
+      whiteYs[tuple(indexes)] += 1
 
   agg = collections.defaultdict(int)
   for k,v in allYs.iteritems():
-    agg[len(v)] += 1
+    agg[v] += 1
+  logging.getLogger(__name__).info("allYs")
   logging.getLogger(__name__).info(agg)
-  return # TODO
+
+  agg = collections.defaultdict(int)
+  for k,v in whiteYs.iteritems():
+    agg[v] += 1
+
+  logging.getLogger(__name__).info("white")
+  logging.getLogger(__name__).info(agg)
+  logging.getLogger(__name__).info("len(xData)")
+  logging.getLogger(__name__).info(len(xData))
+  logging.getLogger(__name__).info("len(whiteYs)")
+  logging.getLogger(__name__).info(len(whiteYs))
 
   dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
+
+  i = 0
+  for x,y in dataSet:
+    logging.getLogger(__name__).info("x=%s" % str(x))
+    logging.getLogger(__name__).info("y=%s" % str(y))
+    i += 1
+    if i > 5:
+      break
+
   return dataSet
 
 def runModelTest(modelName, modelType, lr=0.0001, epochs=1, depth=2):
