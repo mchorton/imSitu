@@ -19,14 +19,18 @@ import sys
 import os
 import collections
 import copy
+import constants as pc # short for pair_train constants
 
 def makeGanDataTest():
   logging.getLogger(__name__).info("Making GAN data")
-  pairnn.makeData("data/models/nngandataTrain_test", "data/models/nngandataDev_test", pairnn.COMPFEATDIR, pairnn.VRNDATATEST, style="gan")
+  pairnn.makeData(
+      "data/models/nngandataTrain_test", "data/models/nngandataDev_test",
+      pairnn.COMPFEATDIR, pairnn.VRNDATATEST, style="gan")
 
 def makeGanData():
   logging.getLogger(__name__).info("Making GAN data")
-  pairnn.makeData("data/models/nngandataTrain", "data/models/nngandataDev", pairnn.COMPFEATDIR, pairnn.VRNDATA, style="gan")
+  pairnn.makeData("data/models/nngandataTrain", "data/models/nngandataDev",
+      pairnn.COMPFEATDIR, pairnn.VRNDATA, style="gan")
 
 class NetD(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
@@ -68,6 +72,8 @@ class NetD(nn.Module):
     #x = F.dropout(F.relu(self.hidden3(x)), training=train)
     x = F.sigmoid(self.output(x))
     return x
+  #def handleForward(*args, **kwargs):
+  #  return self.forward(args, kwargs)
 
 class NetG(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize, dropout=0.):
@@ -117,19 +123,77 @@ class NetG(nn.Module):
         x_prev = x
     x = self.output(x)
     return x
+#def handleForward(*args, **kwargs):
+#  return self.forward(args, kwargs)
 
 def checkDatasetStyle(xdata, ydata):
-  if len(xdata[0]) == (12 + 3 + 1024) and len(ydata[0]) == (1024 + 1):
+  if len(xdata[0]) == (12 + 3 + pc.IMFEATS) and len(ydata[0]) == (pc.IMFEATS + 1):
     return ""
-  elif len(xdata[0]) == (1024) and len(ydata[0]) == (12 + 1):
+  elif len(xdata[0]) == (pc.IMFEATS) and len(ydata[0]) == (12 + 1):
     return "gan"
   raise ValueError("Invalid data set with xdata[0] dim=%d, ydata[0] dim=%d" % (len(xdata[0]), len(ydata[0])))
+
+class TrGanD(nn.Module):
+  def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
+    super(TrGanD, self).__init__()
+    ydataLength = 6 * wESize + 6 * vrESize
+    effectiveYSize = 20
+    self.input_layer = nn.Linear(inputSize + effectiveYSize, hiddenSize)
+    self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
+    self.output = nn.Linear(hiddenSize, outputSize)
+
+    self.ymap = nn.Linear(ydataLength, effectiveYSize)
+
+    self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
+    self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
+
+    self.dropout = 0.
+
+    logging.getLogger(__name__).info("Building Discriminator network")
+    logging.getLogger(__name__).info("--> Input size: %d" % (inputSize + ydataLength))
+  def forward(self, x, y, train=False):
+    """
+    # Note: these arguments are deliberately reversed from NetG. Also, 'x'
+    # has the scores, which is another difference. This is dictated by the
+    # data format in pair_train/nn.py, for "style == 'trgan'"
+    x - the image features, and the scores (unused)
+    y - the image labels, the transformed role, the first noun, the second noun, and the input image features
+    """
+    x = x[:,:pc.IMFEATS] # get rid of the scores.
+    assert(len(x) == len(y))
+    assert(len(x[0]) == pc.IMFEATS), "Invalid len(x[0])=%d" % len(x[0])
+    assert(len(y[0]) == 12 + 3 + pc.IMFEATS)
+
+    context = y[:,:12] # Everything except the similarity score
+    context_vectors = pairnn.getContextVectors(self.contextVREmbedding, self.contextWordEmbedding, context, len(x))
+    mapped_cv = self.ymap(torch.cat(context_vectors, 1))
+    x = torch.cat([x] + [mapped_cv], 1)
+
+    x = F.dropout(F.leaky_relu(self.input_layer(x)), p=self.dropout, training=train)
+    for i in range(0, len(self.hidden_layers)):
+      x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train)
+      if i == 0: x_prev = x
+      #add skip connections for depth
+      if i > 0 and i % 2 == 0: 
+        x = x + x_prev
+        x_prev = x
+    #x = F.dropout(F.relu(self.hidden2(x)), training=train)
+    #x = F.dropout(F.relu(self.hidden3(x)), training=train)
+    x = F.sigmoid(self.output(x))
+    return x
+#  def handleForward(self, xdata, ydata, *args, **kwargs):
+#    """
+#    xdata - an x sample, as from "trgan" style gan input
+#    ydata - a y sample, as from "trgan" style gan input
+#    """
+#    # Omit the score from xdata
+#    self.forward(ydata, xdata[:,:12], *args, **kwargs)
 
 class TrGanG(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize, dropout=0.):
     super(TrGanG, self).__init__()
-    ydataLength = 6 * wESize + 6 * vrESize
-    effectiveYSize = 20
+    self.ydataLength = (6 * wESize + 6 * vrESize) + (vrESize) + (2 * wESize) + pc.IMFEATS
+    effectiveYSize = self.ydataLength # TODO or shall I just concat with the noise?
     self.inputSize = inputSize
     self.input_layer = nn.Linear(self.inputSize + effectiveYSize, hiddenSize)
     self.hidden_layers = nn.ModuleList([nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
@@ -137,43 +201,51 @@ class TrGanG(nn.Module):
     self.dropout = dropout
 
     # TODO add power here?
-    self.ymap = nn.Linear(ydataLength, effectiveYSize)
+    #self.ymap = nn.Linear(self.ydataLength, effectiveYSize)
 
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
     logging.getLogger(__name__).info("Building Generator network")
-    logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + ydataLength))
+    logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + self.ydataLength))
     # TODO should I use padding_idx on the embeddings, to make sure that removing the conditional
     # corresponds to the correct representation?
   def forward(self, z, y, train=False, ignoreCond=False):
     """
     z - the image noise
-    y - the image labels, the transformed role, the first noun, the second noun, and the input image features
+    y - the image labels, the transformed role, the first noun, the second noun,
+    and the input image features
     """
     # TODO @mchorton I ignored att_w, att_r, att_b from Mark's NN code.
     ignoreNoise = True if self.inputSize < 1 else False
     if not ignoreNoise:
-      assert(len(z[0]) == self.inputSize), "invalid len(z[0])=%d, expect %d" % (len(z[0]), self.inputSize)
-    assert(len(y[0]) == (12 + 3 + 1024))
+      assert(len(z[0]) == self.inputSize), \
+          "invalid len(z[0])=%d, expect %d" % (len(z[0]), self.inputSize)
+    assert(len(y[0]) == (12 + 3 + pc.IMFEATS)), \
+        "invalid len(y[0])=%d, expect %d" % (len(y[0]), 12 + 3 + pc.IMFEATS)
     assert(len(z) == len(y)), "invalid len(z)=%d, len(y)=%d" % (len(z), len(y))
 
     batchsize = len(z)
-    annotations = pairnn.getContextVectors(self.vrEmbedding, self.wordEmbedding, y[:,:12], batchsize)
-    role = self.vrEmbedding(y[:,12].long()).view(batchsize, -1)
-    n1 = self.wordEmbedding(y[:,13].long()).view(batchsize, -1)
-    n2 = self.wordEmbedding(y[:,14].long()).view(batchsize, -1)
+    annotations = pairnn.getContextVectors(
+        self.contextVREmbedding, self.contextWordEmbedding, y[:,:12], batchsize)
+    role = self.contextVREmbedding(y[:,12].long()).view(batchsize, -1)
+    n1 = self.contextWordEmbedding(y[:,13].long()).view(batchsize, -1)
+    n2 = self.contextWordEmbedding(y[:,14].long()).view(batchsize, -1)
+    img = y[:,15:15 + pc.IMFEATS]
 
-    context = torch.cat(context + [role, n1, n2], 1)
+    context = torch.cat(annotations + [role, n1, n2, img], 1)
     if ignoreCond:
       context = context.clone()
       context.data.fill_(0)
 
-    toCat = [self.ymap(context)]
+    assert(context.size(1) == self.ydataLength), \
+        "context size %d, expected %d" % (context.size(1), self.ydataLength)
+    toCat = [context]
     if not ignoreNoise:
       toCat = [z] + toCat
     x = torch.cat(toCat, 1)
 
-    x = F.dropout(F.leaky_relu(self.input_layer(x)), training=train, p=self.dropout) 
+    x = F.dropout(
+        F.leaky_relu(self.input_layer(x)), training=train, p=self.dropout) 
     for i in range(0, len(self.hidden_layers)):
       x = F.dropout(F.leaky_relu(self.hidden_layers[i](x)), training=train, p=self.dropout)
       if i == 0: x_prev = x
@@ -187,7 +259,11 @@ class TrGanG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(datasetFileName, ganFileName)
 
-def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20, batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=0.5, nz=100, hiddenSize=1024, style="gan", **kwargs):
+def trainCGAN(
+    datasetFileName = "data/models/nngandataTrain_gs_True",
+    ganFileName = "data/models/ganModel", gpu_id=2, lr=1e-7, logPer=20,
+    batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=0.5, nz=100,
+    hiddenSize=pc.IMFEATS, style="gan", **kwargs):
   # Set up variables.
   beta1=0.9999
   role2Int = torch.load("%s_role2Int" % datasetFileName)
@@ -212,16 +288,17 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
   dataset = torch.load(datasetFileName)
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False, num_workers=4)
   
-  xSize = 1024 # Size of generated images.
-  #assert(xSize == 1024), "Invalid dataset dimensions!"
+  xSize = pc.IMFEATS # Size of generated images.
+  #assert(xSize == pc.IMFEATS), "Invalid dataset dimensions!"
 
   # TODO this should depend a bit on how the data looks.
   # TODO double check parzen window code. Why bad?
-  netD = NetD(xSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
   if style == "gan":
     netG = NetG(nz, xSize, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize, gdropout).cuda(gpu_id)
+    netD = NetD(xSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
   elif style == "trgan":
     netG = TrGanG(nz, xSize, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize, gdropout).cuda(gpu_id)
+    netD = TrGanD(xSize, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
   criterion = nn.BCELoss().cuda(gpu_id)
   l1Criterion = nn.L1Loss().cuda(gpu_id)
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
@@ -235,15 +312,11 @@ def trainCGAN(datasetFileName = "data/models/nngandataTrain_gs_True", ganFileNam
       sys.exit(1)
     os.makedirs(saveDir)
 
-  logging.getLogger(__name__).info("Beginning training")
-  logging.getLogger(__name__).info(len(data))
-  logging.getLogger(__name__).info(len(data[0]))
-  sys.exit(1)
 
 
   for epoch in tqdm.tqdm(range(epochs), total=epochs, desc="Epochs completed: "):
-    for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: ", leave=False):
-
+    for i, data in tqdm.tqdm(
+        enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: ", leave=False):
       # TODO change this to depend on the network.
       # Or, push all complexity into the network class itself?
       # Or, make a trainer that has a nn.Module as a member? Nah.
@@ -272,23 +345,32 @@ def getScores(ydata, style):
   if style == "gan":
     scores = ydata[:,12] #DIFF
   elif style == "trgan":
-    scores = ydata[:,1024]
+    scores = ydata[:,pc.IMFEATS]
   else:
     raise ValueError("Invalid style '%s'" % style)
   return scores
 
-def networkUpdateStep(netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion, logPer, lam, epoch, epochs, nSamples):
+# TODO
+# what is xdata in all different cases?
+# what should TrGanD/G take in?
+# What should in/out be?
+def networkUpdateStep(
+    netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, i, 
+    style, optimizerD, optimizerG, criterion, l1Criterion, logPer, lam, epoch,
+    epochs, nSamples):
   real_label = 1
   fake_label = 0
   # Update D network
   for _ in range(dUpdates):
     netD.zero_grad()
     xdata, ydata = data
+    xdata, ydata = ag.Variable(xdata.cuda(gpu_id)), \
+        ag.Variable(ydata.cuda(gpu_id))
+    if style == "trgan":
+      temp = xdata
+      xdata = ydata
+      ydata = temp
 
-    #logging.getLogger(__name__).info("Sample x points: %s" % str(xdata[:10]))
-    #logging.getLogger(__name__).info("Sample y points: %s" % str(ydata[:10]))
-
-    xdata, ydata = ag.Variable(xdata.cuda(gpu_id)), ag.Variable(ydata.cuda(gpu_id))
     # get scores from ydata
     scores = getScores(ydata, style)
     output = netD(xdata, ydata, True)
@@ -297,8 +379,9 @@ def networkUpdateStep(netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id
         torch.mul(output.view(-1), scores),
         torch.mul(label[:len(output)], scores))
     errD_real.backward()
+    # D_x is how many of the images (all of which were real) were identified as
+    # real.
     D_x = output.data.mean()
-    # D_x is how many of the images (all of which were real) were identified as real.
 
     noise.data.normal_(0, 1)
     fake = netG(noise[:len(ydata)], ydata, True, ignoreCond=ignoreCond)
@@ -308,8 +391,9 @@ def networkUpdateStep(netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id
         torch.mul(output, scores),
         torch.mul(label[:len(output)], scores))
     errD_fake.backward()
+    # D_G_z1 is how many of the images (all of which were fake) were identified 
+    # as real.
     D_G_z1 = output.data.mean()
-    # D_G_z1 is how many of the images (all of which were fake) were identified as real.
     errD = errD_real + errD_fake
     optimizerD.step()
 
@@ -325,13 +409,21 @@ def networkUpdateStep(netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id
         torch.mul(label[:len(output)], scores))
     errG.backward()
     D_G_z2 = output.data.mean()
-    # D_G_z2 is how many of the images (all of which were fake) were identified as real, AFTER the discriminator update.
+    # D_G_z2 is how many of the images (all of which were fake) were identified
+    # as real, AFTER the discriminator update.
 
     fake = netG(noise[:len(ydata)], ydata, True, ignoreCond=ignoreCond)
     resizescores = scores.contiguous().view(-1, 1).expand(fake.size())
+    # because of the swapping, ydata[:,:1024] is the image we hoped to produce
+    if style == "trgan":
+      trueImg = xdata[:,:1024]
+    elif style == "gan":
+      trueImg = xdata
+    else:
+      raise ValueError("Invalid style %s" % style)
     errG_L1 = l1Criterion(
         torch.mul(torch.mul(fake, lam), resizescores),
-        torch.mul(torch.mul(xdata, lam), resizescores))
+        torch.mul(torch.mul(trueImg, lam), resizescores))
     errG_L1.backward()
     optimizerG.step()
 
@@ -342,8 +434,6 @@ def networkUpdateStep(netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id
     logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, epochs, i, nSamples,
                  errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
-
-
 
 def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
   batchSize=16
@@ -358,24 +448,33 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
   netD = netD.cuda(gpu_id)
   dataset = torch.load(datasetFileName)
   # This dataset needs to be a regular-style dataset, not a gan-style one.
-  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=True, num_workers=4)
+  dataloader = torch.utils.data.DataLoader(
+      dataset, batch_size=batchSize, shuffle=True, num_workers=4)
   criterion = nn.MSELoss()
   runningTrue = 0.
   runningGimpy = 0.
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
   datasetSize = 0.
-  for i, data in tqdm.tqdm(enumerate(dataloader, 0), total=len(dataloader), desc="Iterations completed: "):
-    expectedDataSize = 12 + 3 + 1024
-    assert(len(data[0][0]) == expectedDataSize), "expected len(data[0][0])=%d to be %d" % (len(data[0][0]), expectedDataSize)
-    expectedYDataSize = 1024 + 1
-    assert(len(data[1][0]) == expectedYDataSize), "expected len(data[0][0])=%d to be %d" % (len(data[1][0]), expectedYDataSize)
+  for i, data in tqdm.tqdm(
+        enumerate(dataloader, 0), total=len(dataloader),
+        desc="Iterations completed: "):
+    expectedDataSize = 12 + 3 + pc.IMFEATS
+    assert(len(data[0][0]) == expectedDataSize), \
+        "expected len(data[0][0])=%d to be %d" % \
+        (len(data[0][0]), expectedDataSize)
+    expectedYDataSize = pc.IMFEATS + 1
+    assert(len(data[1][0]) == expectedYDataSize), \
+        "expected len(data[0][0])=%d to be %d" % \
+        (len(data[1][0]), expectedYDataSize)
     # 1. No labels on generator. Calculate square loss.
     xdata, featuresAndScore = data
     conditionalData = xdata[:,:12].cuda(gpu_id)
     scores = featuresAndScore[:,-1].cuda(gpu_id).contiguous().view(-1, 1)
     conditionalData = torch.cat([conditionalData, scores], 1)
     noise.data.normal_(0, 1)
-    output = netG(noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id), volatile=True), False, ignoreCond=False)
+    output = netG(
+        noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id),
+            volatile=True), False, ignoreCond=False)
     expectedFeatures = xdata[:,12 + 3:].cuda(gpu_id).contiguous()
     scores = scores.view(len(scores), 1).expand(output.size())
 
@@ -399,14 +498,15 @@ class GanDataLoader(object):
     if len(self.data) == 0:
       raise Exception("GanDataLoader", "No data found")
     x, y = self.data[0]
-    assert(len(x) == 1024), "Invalid 'x' dimension '%d'" % len(x)
+    assert(len(x) == pc.IMFEATS), "Invalid 'x' dimension '%d'" % len(x)
     assert(len(y) == 13), "Invalid 'y' dimension '%d'" % len(y)
 
 def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
   batchSize = 64
   out = []
   nz = netG.inputSize
-  noise = ag.Variable(torch.FloatTensor(64, nz), requires_grad=False).cuda(gpu_id)
+  noise = ag.Variable(
+      torch.FloatTensor(64, nz), requires_grad=False).cuda(gpu_id)
   yvar = ag.Variable(yval.expand(batchSize, yval.size(1))).cuda(gpu_id)
   for i in range(nTestPoints):
     noise.data.normal_(0, 1)
@@ -455,9 +555,9 @@ def parzenWindowCheck(ganModelFile, ganDevSet, **kwargs):
 
     #ydata = 
     #ydata = ydata[:1] # ignore score
-    # xdata is 1x1024
+    # xdata is 1xpc.IMFEATS
     kde_input = torch.transpose(xdata, 0, 1).numpy()
-    # kde_input is 1024x1
+    # kde_input is pc.IMFEATSx1
     if ydata in yValsToXpoints:
       logging.getLogger(__name__).info("HAD POINT %s" % str(ydata))
     yValsToXpoints[ydata].append(kde_input)
