@@ -31,7 +31,8 @@ VRNDATA = "data/pairLearn/vrn.json"
 COMPFEATDIR = "data/comp_fc7/"
 REGFEATDIR = "data/regression_fc7/"
 
-def getContextVectors(contextVREmbedding, contextWordEmbedding, context, batchSize):
+def getContextVectors(
+    contextVREmbedding, contextWordEmbedding, context, batchSize):
   context_vectors = []
   for i in range(6):
     emb = contextVREmbedding(context[:,2*i].long()).view(batchSize, -1)
@@ -410,6 +411,8 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
+    # TODO I should have just ignored this distinction, and ignored the
+    # irrelevant info for the traditional netG
     if style == "" or style == "trgan":
       x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
       y = list(imToFeatures[im2Name]) + [score]
