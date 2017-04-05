@@ -131,8 +131,8 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
 
 #def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
 
-
-def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, maxDbgLen = 1000):
+# Produce the vrnData used for later experiments.
+def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True):
 
   # gets a json object describing image pairs.
   # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
@@ -167,4 +167,4 @@ def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man
 
 # TODO make the distance metric better.
 def summaryStub():
-  getJsonSummary("data/vecStyle/", thresh=2, freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, maxDbgLen = 1000)
+  getJsonSummary("data/vecStyle/", thresh=2, freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
