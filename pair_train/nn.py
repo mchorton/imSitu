@@ -14,6 +14,7 @@ import math
 import utils.mylogger as logging
 import tqdm
 import collections
+import os
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -265,16 +266,32 @@ def makeAllData():
   global TORCHREGTRAINDATATEST
   global TORCHREGDEVDATATEST
 
-  makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
-  makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
   makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
+  makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
+  makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
+
+def makeDirIfNeeded(filename):
+  """
+  Create the given directory, or the directory in which the file would be
+  located.
+  # filename: the name of the file or directory
+  """
+  directory = os.path.dirname(filename)
+  if not os.path.exists(directory):
+    logging.getLogger(__name__).info("Creating directory %s" % directory)
+    os.makedirs(directory)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
-  extra = "_style_%s_mode_%s" % (style, mode)
+  assert(style == ""), "Style no longer supported TODO"
+  extra = "_mode_%s" % mode
   trainLoc += extra
   devLoc += extra
-  logging.getLogger(__name__).info("Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
+
+  makeDirIfNeeded(trainLoc)
+
+  logging.getLogger(__name__).info(
+      "Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
   # prep_work
   vrnData = json.load(open(vrndatafile))
   allNames = list(set([pt[1] for pt in vrnData]))
@@ -290,16 +307,20 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
   logging.getLogger(__name__).info("Saving img names to %s" % devImgNameFile)
   json.dump(list(devImgNames), open(devImgNameFile, "w+"))
 
-  dataSet = makeDataSet(trainLoc, featDir, vrnData, trainImgNames, mode=mode, style=style)
+  dataSet = makeDataSet(
+      trainLoc, featDir, vrnData, trainImgNames, mode=mode, style=style)
   logging.getLogger(__name__).info("Saving data to %s" % trainLoc)
   torch.save(dataSet, trainLoc)
 
-  dataSet = makeDataSet(devLoc, featDir, vrnData, devImgNames, mode=mode, style=style)
+  dataSet = makeDataSet(
+      devLoc, featDir, vrnData, devImgNames, mode=mode, style=style)
   logging.getLogger(__name__).info("Saving data to %s" % devLoc)
   torch.save(dataSet, devLoc)
 
 # TODO refactor this a bit. Also, make some stability tests!
-def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all", style=""):
+def makeDataSet(
+    trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all",
+    style=""):
   """
   Create a pytorch TensorDataset at 'outFileName'. It contains input suitable
   for the models trained to generate image features.
@@ -340,9 +361,11 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   logging.getLogger(__name__).debug("Done getting verb lengths")
 
   rolesAsTuples = all_roles 
-  role2Int = {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
+  role2Int = \
+      {role:index for index, role in enumerate(sorted(list(rolesAsTuples)))}
   allNounsUsed = all_nouns 
-  noun2Int = {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
+  noun2Int = \
+      {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
   verb2Int = {verb: index for index, verb in enumerate(sorted(list(all_verbs)))}
   logging.getLogger(__name__).debug("Done getting maps")
 
@@ -358,7 +381,7 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   logging.getLogger(__name__).info("role2int size: %d" % len(role2Int))
   logging.getLogger(__name__).info("noun2Int size: %d" % len(noun2Int))
 
-  imToFeatures = { name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
+  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
   imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
 
   # Loop through, building train and dev sets.
@@ -373,8 +396,6 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
   if mode != "all":
     img_semchange = {}
     for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
-      #if i % 10000 == 10000-1:
-      # print "iteration %d of %d" % (i, len(vrnData))
       key = (im2Name, str(tRole), noun2)
       if key not in img_semchange: img_semchange[key] = []
       img_semchange[key].append( (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) )
@@ -383,7 +404,6 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
     i = 0
     for (k, v) in tqdm.tqdm(img_semchange.items(), total=len(img_semchange)):
       i+=1
-      #print "i = {0} / {1}".format(i, len(img_semchange))
       ftgt = imToFeatures[k[0]]
       if mode == "max":
         mv = float('inf')
@@ -394,11 +414,7 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
             mv = d
             best = _item
         vrnData.append(best)
-  allYs = collections.defaultdict(int) # TODO delete this.
-  whiteYs = collections.defaultdict(int) # TODO delete this.
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
-    #if i % 10000 == 10000-1:
-    #  print "iteration %d of %d" % (i, len(vrnData))
     anitems = [] 
     for (k,v) in an1.items():
       rid = role2Int[make_tuple(k)]
@@ -411,75 +427,50 @@ def makeDataSet(trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
-    # TODO I should have just ignored this distinction, and ignored the
-    # irrelevant info for the traditional netG
-    if style == "" or style == "trgan":
-      x = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name]) 
+    # TODO remove remnants of "style"
+    if style == "" or style == "trgan" or "gan": 
+      x = list(indexes) \
+          + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] \
+          + list(imToFeatures[im1Name]) 
       y = list(imToFeatures[im2Name]) + [score]
-    elif style == "gan":
+    elif style == "TODO remove this":
       x = list(imToFeatures[im1Name])
       y = list(indexes) + [score]
-      allYs[tuple(indexes)] += 1
     else:
       raise ValueError("invalid style '%s'" % style)
-
-    """
-    elif style == "trgan": TODO this will just use same style as ""
-      x =  list(imToFeatures[im2Name]) 
-      y = list(indexes) + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] + list(imToFeatures[im1Name])
-    """
 
     if im1Name in whitelistedImgNames:
       xData.append(x)
       yData.append(y)
-      whiteYs[tuple(indexes)] += 1
-
-  agg = collections.defaultdict(int)
-  for k,v in allYs.iteritems():
-    agg[v] += 1
-  logging.getLogger(__name__).info("allYs")
-  logging.getLogger(__name__).info(agg)
-
-  agg = collections.defaultdict(int)
-  for k,v in whiteYs.iteritems():
-    agg[v] += 1
-
-  logging.getLogger(__name__).info("white")
-  logging.getLogger(__name__).info(agg)
-  logging.getLogger(__name__).info("len(xData)")
-  logging.getLogger(__name__).info(len(xData))
-  logging.getLogger(__name__).info("len(whiteYs)")
-  logging.getLogger(__name__).info(len(whiteYs))
 
   dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
-
-  i = 0
-  for x,y in dataSet:
-    logging.getLogger(__name__).info("x=%s" % str(x))
-    logging.getLogger(__name__).info("y=%s" % str(y))
-    i += 1
-    if i > 5:
-      break
-
   return dataSet
 
 def runModelTest(modelName, modelType, lr=0.0001, epochs=1, depth=2):
-  makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
+  makeData(
+      TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
-  runModel(modelName, modelType, depth, lr, TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, epochs=epochs)
+  runModel(
+      modelName, modelType, depth, lr, TORCHCOMPTRAINDATATEST,
+      TORCHCOMPDEVDATATEST, epochs=epochs)
 
-def runModel(modelName, modelType, depth=20, lr=0.25, trainLoc=TORCHCOMPTRAINDATA, devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024, batchSize=128, decay_iter = 2):
+def runModel(
+    modelName, modelType, depth=20, lr=0.25, trainLoc=TORCHCOMPTRAINDATA,
+    devLoc=TORCHCOMPDEVDATA, epochs=10, weight_decay=0.01, nHidden = 1024,
+    batchSize=128, decay_iter = 2):
   # Get the data
   #trainLoc = TORCHCOMPTRAINDATATEST
   #devLoc = TORCHCOMPDEVDATATEST
   print "Loading training data from %s" % str(trainLoc)
   train = torch.load(trainLoc)
   
-  trainloader = td.DataLoader(train, batch_size=batchSize, shuffle=True, num_workers=4)
+  trainloader = td.DataLoader(
+      train, batch_size=batchSize, shuffle=True, num_workers=4)
 
   print "Loading dev data from %s" % str(devLoc)
   dev = torch.load(devLoc)
-  devloader = td.DataLoader(dev, batch_size=batchSize, shuffle=True, num_workers=4)
+  devloader = td.DataLoader(
+      dev, batch_size=batchSize, shuffle=True, num_workers=4)
 
   print "found %d train datapoints" % len(train)
   print "found %d dev datapoints" % len(dev)
@@ -506,7 +497,9 @@ def runModel(modelName, modelType, depth=20, lr=0.25, trainLoc=TORCHCOMPTRAINDAT
   print "model type {0}".format(modelType)
   if modelType == "nn":
     print "running nn"
-    net = ImTransNet(indim - (3+12), verb2Len, depth, nHidden, outdim, nWords, WESize, nVRs, vrESize).cuda() # ?
+    net = ImTransNet(
+        indim - (3+12), verb2Len, depth, nHidden, outdim, nWords, WESize, nVRs,
+        vrESize).cuda()
   elif modelType == "dot":
     net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda()
   elif modelType == "cross":
@@ -515,7 +508,8 @@ def runModel(modelName, modelType, depth=20, lr=0.25, trainLoc=TORCHCOMPTRAINDAT
     raise Exception("invalid modelType '%s'" % str(modelType))
 
   criterion = nn.MSELoss()
-  optimizer = optim.SGD(net.parameters(), lr=lr, momentum=.9, weight_decay=.0001)
+  optimizer = optim.SGD(
+      net.parameters(), lr=lr, momentum=.9, weight_decay=.0001)
   #optimizer = optim.Adam(net.parameters(), lr, weight_decay=weight5decay)
   #optimizer = optim.RMSprop(net.parameters(), lr=lr, weight_decay=weight_decay)
   def getLoss(loader, epoch, name):
