@@ -252,6 +252,7 @@ class MatrixCross(nn.Module):
 
 # Our json object VRNData looks like:
 # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
+# TODO try running new model with all data.
 def makeAllData():
   global TORCHCOMPTRAINDATA
   global TORCHCOMPDEVDATA
@@ -266,7 +267,18 @@ def makeAllData():
   global TORCHREGTRAINDATATEST
   global TORCHREGDEVDATATEST
 
-  makeData(TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
+  makeData(
+      TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST,
+      mode="all")
+  makeData(
+      TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST,
+      mode="all")
+  makeData(
+      TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA, mode="all")
+  makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA, mode="all")
+
+  makeData(
+      TORCHCOMPTRAINDATATEST, TORCHCOMPDEVDATATEST, COMPFEATDIR, VRNDATATEST)
   makeData(TORCHREGTRAINDATATEST, TORCHREGDEVDATATEST, REGFEATDIR, VRNDATATEST)
   makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
   makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
@@ -427,17 +439,10 @@ def makeDataSet(
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
-    # TODO remove remnants of "style"
-    if style == "" or style == "trgan" or "gan": 
-      x = list(indexes) \
-          + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] \
-          + list(imToFeatures[im1Name]) 
-      y = list(imToFeatures[im2Name]) + [score]
-    elif style == "TODO remove this":
-      x = list(imToFeatures[im1Name])
-      y = list(indexes) + [score]
-    else:
-      raise ValueError("invalid style '%s'" % style)
+    x = list(indexes) \
+        + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] \
+        + list(imToFeatures[im1Name]) 
+    y = list(imToFeatures[im2Name]) + [score]
 
     if im1Name in whitelistedImgNames:
       xData.append(x)

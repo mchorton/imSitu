@@ -87,5 +87,8 @@ class TestRP(unittest.TestCase):
     expDbg = {(u'p1', u'p1'): {'aisim': 1.0, 'arsim': 1.0, 'ret': -1.0, 'vsim': 1.0}}
     expD = {(u'p1', u'p1'): -1.0}
 
+    # TODO don't think this is used anymore?
+    """
     self.assertEqual(expD, d)
     self.assertEqual(expDbg, wsc.simDbg)
+    """

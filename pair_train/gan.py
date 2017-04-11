@@ -13,7 +13,6 @@ import time
 from ast import literal_eval as make_tuple
 import utils.mylogger as logging
 import pair_train.nn as pairnn
-#from tqdm import tqdm
 import tqdm
 import sys
 import os
@@ -24,8 +23,11 @@ import multiprocessing
 import tblib.pickling_support
 tblib.pickling_support.install()
 
+# This is used for capturing errors from subprocesses
+# See rocksportrocker comment here:
+# http://stackoverflow.com/questions/6126007/python-getting-a-traceback-from-a-
+#     multiprocessing-process/16618842
 class ExceptionWrapper(object):
-
     def __init__(self, ee):
         self.ee = ee
         __,  __, self.tb = sys.exc_info()
@@ -369,7 +371,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, **kwar
   # GPUs
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
-  activeGpus = [0, 1]
+  activeGpus = [0, 1, 2, 3]
   #activeGpus = [0] # TODO
   nGpus = len(activeGpus)
   gpuToTasks = {gpu: [] for gpu in activeGpus}
@@ -418,6 +420,7 @@ def genDataAndTrainIndividualGansStubTest():
       procsPerGpu=1,
       style="pizza")
 
+# TODO why 2 of these?
 def genDataAndTrainIndividualGansStubTest():
   genDataAndTrainIndividualGans(
       "data/multigan_test/",
@@ -435,13 +438,14 @@ def genDataAndTrainIndividualGansStub():
   # TODO make this auto create the model folder.
   genDataAndTrainIndividualGans(
       "data/multigan/",
-      "data/pairLearn/comptrain.pyt_mode_max",
+      "data/pairLearn/comptrain.pyt_mode_all",
       "data/runs/",
       epochs=500,
       logPer=1,
       genDepth=8,
       depth=8,
-      procsPerGpu=12,
+      procsPerGpu=4,
+      lr=1,
       style="pizza") # TODO this is ignored.
 
 def genDataAndTrainIndividualGansStubTest():
@@ -455,10 +459,13 @@ def genDataAndTrainIndividualGansStubTest():
       depth=2,
       procsPerGpu=1)
 
-def genDataAndTrainIndividualGans(outDirName, datasetFileName, logFileDirectory, **kwargs):
+def genDataAndTrainIndividualGans(
+    outDirName, datasetFileName, logFileDirectory, **kwargs):
   datasetDir = os.path.join(outDirName, "nounpair_data/")
   shardAndSave(datasetFileName, datasetDir)
   ganLoc = os.path.join(outDirName, "trained_models/")
+  if not os.path.exists(ganLoc):
+    os.makedirs(ganLoc)
   trainIndividualGans(
       datasetDir, ganLoc, logFileDirectory, mapBaseName=datasetFileName,
       **kwargs)
@@ -708,74 +715,47 @@ def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
     out = [out]
   return out[0]
 
-# TODO this should basically work, but has a lot of print statements.
-def parzenWindowCheck(ganModelFile, ganDevSet, **kwargs):
+def parzenWindowFromFile(ganModelFile, ganDevSet, **kwargs):
+  gDiskDevLoader = GanDataLoader(ganDevSet)
+  _, netG = torch.load(ganModelFile)
+  parzenWindowProb(netG, gDiskDevLoader.data, **kwargs)
+
+def parzenWindowProb(netG, devData, **kwargs):
   """
-  TODO: I need to find out why the values are always nan or 0.
-  1. Try more samples in the PDF? might not help...
-  2. Check if 'y' values are unique; check multiplicity.
-  3. Or, maybe the model is just bad...
+  nSamples - number of points to draw from generator when making distribution
+  nTestSamples - number of points to draw from devData for testing
   """
   # Set up some values.
   gpu_id = kwargs.get("gpu_id", 2)
   logPer = kwargs.get("logPer", 1e12)
   bw_method = kwargs.get("bw_method", "scott")
-  _, netG = torch.load(ganModelFile)
-  netG = netG.cuda(gpu_id)
-  gDiskDevLoader = GanDataLoader(ganDevSet)
   nSamples = kwargs.get("nSamples", 100)
   nTestSamples = kwargs.get("nTestSamples", 100)
-  batchSize = kwargs.get("batchSize", 32)
-  nz = netG.inputSize
 
+  netG = netG.cuda(gpu_id)
 
   # map from conditioned value to a list of datapoints that match that value.
-  yValsToXpoints = collections.defaultdict(list)
   ymap = collections.defaultdict(list)
 
   # This batch_size must be one, because I don't iterate over ydata again.
-  devDataLoader = torch.utils.data.DataLoader(gDiskDevLoader.data, batch_size=1, shuffle=False, num_workers=0) # TODO
+  devDataLoader = torch.utils.data.DataLoader(
+      devData, batch_size=1, shuffle=False, num_workers=0)
   logging.getLogger(__name__).info("Testing dev data against parzen window fit")
-  for i, data in tqdm.tqdm(enumerate(devDataLoader, 0), total=len(devDataLoader), desc="Iterations completed: "):
+  for i, data in tqdm.tqdm(
+      enumerate(devDataLoader, 0), total=len(devDataLoader),
+      desc="Iterations completed: "):
     if i >= nTestSamples:
       break
     xdata, ydata = data
-    # Herein lies the problem TODO
     ydata = ydata[:,:12] 
-    #logging.getLogger(__name__).info("Y size")
-    #logging.getLogger(__name__).info(ydata.size())
-
-    #ydata = 
-    #ydata = ydata[:1] # ignore score
-    # xdata is 1xpc.IMFEATS
-    kde_input = torch.transpose(xdata, 0, 1).numpy()
     # kde_input is pc.IMFEATSx1
-    if ydata in yValsToXpoints:
-      logging.getLogger(__name__).info("HAD POINT %s" % str(ydata))
-    yValsToXpoints[ydata].append(kde_input)
-    if i <= 0:
-      logging.getLogger(__name__).info("x=%s" % str(xdata))
-      logging.getLogger(__name__).info("y=%s" % str(ydata))
-
+    kde_input = torch.transpose(xdata, 0, 1).numpy()
     key = tuple(*ydata.numpy().tolist())
-    if key in ymap:
-      logging.getLogger(__name__).info("i=%d, found repeat key %s" % (i, str(key)))
     ymap[key].append(kde_input)
 
-
-
-
-
-  logging.getLogger(__name__).info(len(yValsToXpoints))
-  agg = collections.defaultdict(int)
-  # Maybe I shouldn't call len()?
-  for k, v in yValsToXpoints.iteritems():
-    #logging.getLogger(__name__).info("k=%s, v=%s" % (str(k), str(v)))
-    agg[len(v)] += 1
-  logging.getLogger(__name__).info(agg)
-
   probs = {}
-  for i, (ytuple, xlist) in tqdm.tqdm(enumerate(ymap.iteritems()), total=len(yValsToXpoints)):
+  for i, (ytuple, xlist) in tqdm.tqdm(
+      enumerate(ymap.iteritems()), total=len(ymap)):
     # Convert ytuple back into a tensor
     yval = torch.Tensor(list(ytuple)).view(1, -1)
     logging.getLogger(__name__).info(yval.size())
