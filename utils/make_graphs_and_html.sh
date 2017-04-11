@@ -4,6 +4,6 @@
 # To also serve the html, you may want to use the utils/myserver class.
 
 # $1 is the directory
-DIR=data/runs/
+DIR=$1
 find $DIR -name "*.log" -exec ./utils/log2graph.sh {} \;
 python utils/make_html.py $DIR

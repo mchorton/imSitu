@@ -21,6 +21,7 @@ import copy
 import constants as pc # short for pair_train constants
 import multiprocessing
 import tblib.pickling_support
+import itertools as it
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -302,7 +303,6 @@ class GanTrainer(object):
   def train(self, datasetFileName, ganFileName, **moreKwargs):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
-    logging.getLogger(__name__).info("OUT: %s" % ganFileName)
     trainCGAN(
         datasetFileName=datasetFileName, ganFileName=ganFileName, **kwargs)
 
@@ -340,11 +340,24 @@ class ShardedDataHandler(object):
       outname = os.path.join(self.directory, self.keyToName(k))
       saveShard(outname, datalist)
 
-def shardAndSave(datasetFileName, outDirName):
+def histString(histogram):
+    """
+    Represent a np.histogram in a nice / readable way.
+    """
+    hist, binEdges = histogram
+    del histogram
+    ret = "[" + "<%s>" % str(binEdges[0])
+    binEdges = binEdges[1:]
+    for val, edge in it.izip(hist, binEdges):
+        ret += " %s <%s>" % (val, edge)
+    return ret + ")"
+
+def shardAndSave(datasetFileName, outDirName, **kwargs):
   """
   Break up data in datasetFileName based on noun pairs. Save the chunks of data
   to folder outDirName.
   """
+  minDataPts = kwargs.get("minDataPts", 0)
   # TODO assert that this dataset is in the right form?
   nounpairToData = collections.defaultdict(list)
   dataSet = torch.load(datasetFileName)
@@ -357,6 +370,17 @@ def shardAndSave(datasetFileName, outDirName):
     nounpairToData[key].append((data[0].clone(), data[1].clone()))
   logging.getLogger(__name__).info(
       "Got %d unique noun pairs" % len(nounpairToData))
+  bins = [0, 1, 2, 3, 4, 5, 10, 15, 20, 30, 50, 100, 200, 500, 1000, 10000, sys.maxint]
+  distribution = np.histogram(
+      [len(v) for v in nounpairToData.itervalues()], bins=bins)
+  logging.getLogger(__name__).info(
+      "Distribution of dataset sizes: %s" % histString(distribution))
+  logging.getLogger(__name__).info(
+      "Requiring at least %d datapoints" % minDataPts)
+  nounpairToData = {
+      pair: data for pair, data in nounpairToData.iteritems() if len(data) > minDataPts}
+  logging.getLogger(__name__).info(
+      "Filtered down to %d unique noun pairs" % len(nounpairToData))
   saver = ShardedDataHandler(outDirName)
   saver.save(nounpairToData)
 
@@ -372,11 +396,9 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, **kwar
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
   activeGpus = [0, 1, 2, 3]
-  #activeGpus = [0] # TODO
   nGpus = len(activeGpus)
   gpuToTasks = {gpu: [] for gpu in activeGpus}
   for i, filename in enumerate(os.listdir(datasetDirectory)):
-    # TODO don't run ones that are already there?
     filenameNoExt = os.path.splitext(filename)[0]
     gpuId = i % nGpus
     gpuToTasks[gpuId].append(
@@ -390,7 +412,6 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, **kwar
             gpuId,
             ganTrainer))
   pools = {}
-  # TODO could it be the children spawned by reading the data?
   for gpu in activeGpus:
     pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
   resultmap = {}
@@ -412,57 +433,37 @@ def genDataAndTrainIndividualGansStubTest():
   genDataAndTrainIndividualGans(
       "data/multigan_test/",
       "data/pairLearn/comptrain_test.pyt_mode_max",
-      "data/test_runs/",
+      "data/runs/test_runs/",
       epochs=2,
       logPer=1,
       genDepth=2,
       depth=2,
       procsPerGpu=1,
-      style="pizza")
-
-# TODO why 2 of these?
-def genDataAndTrainIndividualGansStubTest():
-  genDataAndTrainIndividualGans(
-      "data/multigan_test/",
-      "data/pairLearn/comptrain_test.pyt_mode_max",
-      "data/test_runs/",
-      epochs=500,
-      logPer=1,
-      genDepth=2,
-      depth=2,
-      procsPerGpu=1,
-      style="pizza") # TODO this is ignored.
+      minDataPts=5,
+      style="trgan")
 
 def genDataAndTrainIndividualGansStub():
-  # TODO: fix style, try mode_all, tune net.
-  # TODO make this auto create the model folder.
   genDataAndTrainIndividualGans(
-      "data/multigan/",
-      "data/pairLearn/comptrain.pyt_mode_all",
-      "data/runs/",
-      epochs=500,
-      logPer=1,
-      genDepth=8,
-      depth=8,
+      "data/multigan_2/",
+      "data/pairLearn/comptrain.pyt_mode_max",
+      "data/runs/multigan_2/",
+      epochs=200,
+      logPer=3,
+      genDepth=32,
+      depth=32,
       procsPerGpu=4,
-      lr=1,
-      style="pizza") # TODO this is ignored.
-
-def genDataAndTrainIndividualGansStubTest():
-  genDataAndTrainIndividualGans(
-      "data/multigan_test/",
-      "data/pairLearn/comptrain_test.pyt_mode_max",
-      "data/test_runs/",
-      epochs=2,
-      logPer=1,
-      genDepth=2,
-      depth=2,
-      procsPerGpu=1)
+      lr=1e-2,
+      minDataPts=100,
+      decayPer=10,
+      decayRate=0.7,
+      batchSize=32
+      style="trgan")
 
 def genDataAndTrainIndividualGans(
     outDirName, datasetFileName, logFileDirectory, **kwargs):
   datasetDir = os.path.join(outDirName, "nounpair_data/")
-  shardAndSave(datasetFileName, datasetDir)
+  logging.getLogger(__name__).info("kwargs: %s" % str(kwargs))
+  shardAndSave(datasetFileName, datasetDir, **kwargs)
   ganLoc = os.path.join(outDirName, "trained_models/")
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
@@ -474,7 +475,7 @@ def trainCGAN(
     datasetFileName = "data/models/nngandataTrain_gs_True",
     ganFileName = "data/models/ganModel", gpu_id=0, lr=1e-2, logPer=5,
     batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=1e-2, nz=0,
-    hiddenSize=pc.IMFEATS, style="gan", **kwargs):
+    hiddenSize=pc.IMFEATS, **kwargs):
   # Set up variables.
   beta1=0.9999
   mapBaseName = kwargs.get("mapBaseName", datasetFileName)
@@ -721,6 +722,8 @@ def parzenWindowFromFile(ganModelFile, ganDevSet, **kwargs):
   parzenWindowProb(netG, gDiskDevLoader.data, **kwargs)
 
 def parzenWindowProb(netG, devData, **kwargs):
+  # TODO this is using ydata as the conditional! It shouldn't.
+  # I need to fix many things about this function.
   """
   nSamples - number of points to draw from generator when making distribution
   nTestSamples - number of points to draw from devData for testing
@@ -746,8 +749,14 @@ def parzenWindowProb(netG, devData, **kwargs):
       desc="Iterations completed: "):
     if i >= nTestSamples:
       break
-    xdata, ydata = data
-    ydata = ydata[:,:12] 
+    conditional, imageAndScore = data
+    image = imageAndScore[:,:1024]
+    if style == "gan":
+      conditional = conditional[:,:12]
+    elif syle == "trgan":
+      pass
+    else:
+      raise ValueError("Invalid style '%s'" % style)
     # kde_input is pc.IMFEATSx1
     kde_input = torch.transpose(xdata, 0, 1).numpy()
     key = tuple(*ydata.numpy().tolist())
