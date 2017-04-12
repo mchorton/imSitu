@@ -22,6 +22,8 @@ import constants as pc # short for pair_train constants
 import multiprocessing
 import tblib.pickling_support
 import itertools as it
+import pair_train.dashboard as dash
+import re
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -322,13 +324,13 @@ def saveShard(outFileName, datalist):
 
 class ShardedDataHandler(object):
   # Class for reading the folder output of shardAndSave
-  def __init__(self, directory):
+  def __init__(self, directory, suffix = ".data"):
     self.directory = directory
+    self._suffix = suffix
     if not os.path.exists(self.directory):
       os.makedirs(self.directory)
-  @staticmethod
-  def keyToName(key):
-    return "_".join(map(str, key)) + ".data"
+  def keyToName(self, key):
+    return "_".join(map(lambda x: str(int(x)), key)) + self._suffix
   def save(self, datashards):
     """
     Save a bunch of datasets to disk.
@@ -339,6 +341,18 @@ class ShardedDataHandler(object):
         datashards.iteritems(), total=len(datashards), desc="Saving datasets"):
       outname = os.path.join(self.directory, self.keyToName(k))
       saveShard(outname, datalist)
+  def nameToNouns(self, filename):
+    relevant = os.path.basename(filename)
+    fileReg = re.compile("(\d+)(?:.0)?_(\d+)(?:.0)?" + self._suffix)
+    match = fileReg.match(relevant)
+    if not match:
+      raise ValueError("Invalid filename '%s' doesn't match regex")
+    return map(lambda x: int(float(x)), match.group(1, 2))
+  def iterNounPairs(self):
+    for filename in os.listdir(self.directory):
+      yield self.nameToNouns(filename)
+  def keyToPath(self, key):
+    return os.path.join(self.directory, self.keyToName(key))
 
 def histString(histogram):
     """
@@ -456,14 +470,22 @@ def genDataAndTrainIndividualGansStub():
       minDataPts=100,
       decayPer=10,
       decayRate=0.7,
-      batchSize=32
+      batchSize=32,
+      gdropout=0.05,
       style="trgan")
 
 def genDataAndTrainIndividualGans(
     outDirName, datasetFileName, logFileDirectory, **kwargs):
   datasetDir = os.path.join(outDirName, "nounpair_data/")
-  logging.getLogger(__name__).info("kwargs: %s" % str(kwargs))
   shardAndSave(datasetFileName, datasetDir, **kwargs)
+
+  parzenPath = os.path.join(outDirName, "parzen_fits/")
+  gdm = dash.GanDashboardMaker()
+  gdm.makeDashboard(
+      parzenPath, logFileDirectory, datasetDir,
+      datasetFileName + "_noun2Int",
+      os.path.join(logFileDirectory, "index.php"))
+
   ganLoc = os.path.join(outDirName, "trained_models/")
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
@@ -749,33 +771,40 @@ def parzenWindowProb(netG, devData, **kwargs):
       desc="Iterations completed: "):
     if i >= nTestSamples:
       break
-    conditional, imageAndScore = data
-    image = imageAndScore[:,:1024]
+    fullConditional, imageAndScore = data
+    image = imageAndScore[:,:pc.IMFEATS]
     if style == "gan":
-      conditional = conditional[:,:12]
+      conditional = fullConditional[:,:12]
     elif syle == "trgan":
-      pass
+      conditional = fullConditional
     else:
       raise ValueError("Invalid style '%s'" % style)
     # kde_input is pc.IMFEATSx1
-    kde_input = torch.transpose(xdata, 0, 1).numpy()
-    key = tuple(*ydata.numpy().tolist())
-    ymap[key].append(kde_input)
+    kde_input = torch.transpose(image, 0, 1).numpy()
+    key = tuple(*conditional.numpy().tolist())
+    ymap[key].append((kde_input, fullConditional))
 
   probs = {}
-  for i, (ytuple, xlist) in tqdm.tqdm(
+  for i, (relevantCond, kdeinAndFC) in tqdm.tqdm(
       enumerate(ymap.iteritems()), total=len(ymap)):
-    # Convert ytuple back into a tensor
-    yval = torch.Tensor(list(ytuple)).view(1, -1)
-    logging.getLogger(__name__).info(yval.size())
+    kdein, fullConditional = zip(*kdeinAndFC)
 
-    dataTensor = getGANChimeras(netG, nSamples, yval, gpu_id=gpu_id, dropoutOn=True if netG.inputSize < 1 else False)
+    # Convert conditional back into a tensor. By definition, each element should
+    # be the same (or in style == 'gan' case, the elements that aren't the same
+    # are irrelevant.
+    fullConditional = fullConditional[0]
+    logging.getLogger(__name__).info(fullConditional.size())
+
+    dataTensor = getGANChimeras(
+        netG, nSamples, fullConditional, gpu_id=gpu_id,
+        dropoutOn=True if netG.inputSize < 1 else False)
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
     gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
-    devData = np.concatenate(xlist, axis=1)
-    probs[yval] = gpw.evaluate(devData)
+    devData = np.concatenate(kdein, axis=1)
+    probs[relevantCond] = gpw.evaluate(devData)
     if i % logPer == (logPer - 1):
-      logging.getLogger(__name__).info("number of x points: %d" % len(xlist))
-      logging.getLogger(__name__).info("prob sample: %s" % repr(probs[yval]))
+      logging.getLogger(__name__).info("number of x points: %d" % len(kdein))
+      logging.getLogger(__name__).info(
+          "prob sample: %s" % repr(probs[relevantCond]))
 
   return probs

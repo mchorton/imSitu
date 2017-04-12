@@ -1,3 +1,4 @@
+import utils.mylogger as logging
 def imgref(img):
   return '<img src="%s">' % (img)
 
@@ -32,11 +33,33 @@ class HtmlTable():
       output += "<tr>\n"
       for n, elem in enumerate(row):
         output += "<th>"
-        output += "%s" % elem
+        output += "%s" % str(elem)
         output += "</th>\n"
       output += "</tr>\n"
     output += "</table>"
     output += self.footer
     return output
 
+def pairToEqStr(pair):
+    logging.getLogger(__name__).info(pair)
+    logging.getLogger(__name__).info(map(str, pair))
+    return "%s=%s" % tuple(map(str, pair))
 
+class Element(object):
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+    def __str__(self):
+        ret = "<"
+        ret += " ".join(self.args)
+        ret += " "
+        ret += " ".join(map(pairToEqStr, self.kwargs.iteritems()))
+        return ret + ">" # Should it be />? TODO
+
+class ImgRef(Element):
+    def __init__(self, **kwargs):
+        """
+        User should supply 'src=blah'
+        But we won't sanity check.
+        """
+        super(ImgRef, self).__init__("img", **kwargs)
