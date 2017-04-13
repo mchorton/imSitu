@@ -36,7 +36,9 @@ REGFEATDIR = "data/regression_fc7/"
 # TODO I changed thresh to 'inf', from '2'
 # TODO should I just remove all filtering?
 def makeVrnData():
-  rpe.getJsonSummary("data/vecStyle/", thresh=float('inf'), freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")
+  import split.rp_experiments as rpe
+  rpe.generateAllDistVecStyle("data/vecStyle")
+  rpe.getJsonSummary("data/vecStyle/", thresh=float('inf'), freqthresh=10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")
 
 def getContextVectors(
     contextVREmbedding, contextWordEmbedding, context, batchSize):

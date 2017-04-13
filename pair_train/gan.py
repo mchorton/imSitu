@@ -419,7 +419,7 @@ def trainOneGan(
   parResults = ""
   try:
     probs = parzenWindowFromFile(ganFileName, datasetFileName, gpu_id=gpuId)
-    parResults = str(probs)
+    parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
   with open(parzenName, "w") as parFile:

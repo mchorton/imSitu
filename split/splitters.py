@@ -1,5 +1,7 @@
-import data_utils as du # TODO split will 
-# TODO I broke this. Perhaps I'll fix it one day.
+import data_utils as du
+# TODO This doesn't work, and should be fixed. Punting for now.
+# Main issue is, I'm not sure where get_perverb_zssplit() went. Maybe I
+# accidentally deleted it? TODO dig through git logs.
 def splitTrainDevTestMinInTrain():
   # TODO automatically chosen!
   """
@@ -17,13 +19,13 @@ def splitTrainDevTestMinInTrain():
 
   finalSplit = {}
   print "Loading Data"
-  full_data = get_joint_set(datasets)
-  imgdeps = getImageDeps(getvrn2Imgs(full_data))
+  full_data = du.get_joint_set(datasets)
+  imgdeps = du.getImageDeps(du.getvrn2Imgs(full_data))
 
   print "getting uniform split"
   init = set(full_data.keys())
-  init, finalSplit["zsRanDev"] = get_uniform_split(init, randevsize)
-  init, finalSplit["zsRanTest"] = get_uniform_split(init, rantestsize)
+  init, finalSplit["zsRanDev"] = du.get_uniform_split(init, randevsize)
+  init, finalSplit["zsRanTest"] = du.get_uniform_split(init, rantestsize)
 
   N = len(init)
   #softTrainLim = (N - (devzs + testzs) * 2) / (1. * N) # corresponds to 52%
@@ -36,8 +38,8 @@ def splitTrainDevTestMinInTrain():
   #return N, int((devzs + testzs) * 1.1 * N)
 
   finalSplit["zsTrain"], zsDevTestWaste = get_perverb_zssplit(init, softTrainLim, hardTrainLim, imgdeps)
-  zsDevTest, finalSplit["waste"] = filterZeroShot(zsDevTestWaste, finalSplit["zsTrain"], imgdeps)
-  finalSplit["zsDev"], finalSplit["zsTest"] = get_uniform_split(zsDevTest, len(zsDevTest) / 2)
+  zsDevTest, finalSplit["waste"] = du.filterZeroShot(zsDevTestWaste, finalSplit["zsTrain"], imgdeps)
+  finalSplit["zsDev"], finalSplit["zsTest"] = du.get_uniform_split(zsDevTest, len(zsDevTest) / 2)
 
   for k,v in finalSplit.iteritems():
     print "split %s: %s" % (str(k), str(len(v)))
