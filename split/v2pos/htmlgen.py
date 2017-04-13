@@ -1,4 +1,3 @@
-import utils.mylogger as logging
 def imgref(img):
   return '<img src="%s">' % (img)
 
@@ -41,8 +40,6 @@ class HtmlTable():
     return output
 
 def pairToEqStr(pair):
-    logging.getLogger(__name__).info(pair)
-    logging.getLogger(__name__).info(map(str, pair))
     return "%s=%s" % tuple(map(str, pair))
 
 class Element(object):
@@ -62,4 +59,12 @@ class ImgRef(Element):
         User should supply 'src=blah'
         But we won't sanity check.
         """
+        kwargs["src"] = '"%s"' % kwargs["src"]
         super(ImgRef, self).__init__("img", **kwargs)
+
+class PhpTextFile(object):
+    def __init__(self, filename):
+        self.filename = filename
+    def __str__(self):
+        return '<div><p><?php echo file_get_contents("%s"); ?></p></div>' % self.filename
+# TODO why is this text being eaten?

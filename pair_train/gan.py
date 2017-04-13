@@ -1,3 +1,5 @@
+# TODO remove this "scores" nonsense.
+# TODO is dropout on in the right places?
 # Training the image transformation logic using a neural network.
 import json
 import scipy.stats as ss
@@ -297,7 +299,7 @@ class TrGanG(nn.Module):
     return x
 
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
-  trainCGAN(datasetFileName, ganFileName)
+  trainCGAN(ganFileName, datasetFileName)
 
 class GanTrainer(object):
   def __init__(self, **kwargs):
@@ -306,7 +308,12 @@ class GanTrainer(object):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
     trainCGAN(
-        datasetFileName=datasetFileName, ganFileName=ganFileName, **kwargs)
+        ganFileName, datasetFileName, **kwargs)
+  def trainNoFile(self, datasetFileName, **moreKwargs):
+    kwargs = copy.deepcopy(self.kwargs)
+    kwargs.update(moreKwargs)
+    return trainCGANNoFile(
+        datasetFileName, **kwargs)
 
 def saveShard(outFileName, datalist):
   """
@@ -400,15 +407,36 @@ def shardAndSave(datasetFileName, outDirName, **kwargs):
 
 def trainOneGanArgstyle(args):
   trainOneGan(*args)
-def trainOneGan(datasetFileName, ganFileName, logFileName, gpuId, ganTrainer):
+def trainOneGan(
+    ganFileName, datasetFileName, logFileName, gpuId, ganTrainer, 
+    parzenDirectory, ablationDirectory, useScore):
   ganTrainer.train(
-      datasetFileName, ganFileName, logFileName=logFileName, gpu_id=gpuId)
+      datasetFileName, ganFileName, useScore=useScore, logFileName=logFileName,
+      gpu_id=gpuId)
+  # Run the parzen window fit. Save the results as a string.
+  basename = os.path.splitext(os.path.basename(datasetFileName))[0]
+  parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
+  parResults = ""
+  try:
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, gpu_id=gpuId)
+    parResults = str(probs)[:2000]
+  except Exception as e:
+    parResults = str(e)
+  with open(parzenName, "w") as parFile:
+    parFile.write(str(parResults))
 
-def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, **kwargs):
+  # Run the ablation
+  ablationName = os.path.join(ablationDirectory, "%s.ablation" % basename)
+  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, ganTrainer, useScore=useScore, logFileName=logFileName, gpu_id=gpuId)
+  with open(ablationName, "w") as lossFile:
+    lossFile.write("Loss=%s" % str(myLoss))
+
+def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, **kwargs):
   # TODO nice to do something fancier. For now, just shard jobs between these 
   # GPUs
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
+  seqOverride = kwargs.get("seqOverride", False)
   activeGpus = [0, 1, 2, 3]
   nGpus = len(activeGpus)
   gpuToTasks = {gpu: [] for gpu in activeGpus}
@@ -417,31 +445,39 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, **kwar
     gpuId = i % nGpus
     gpuToTasks[gpuId].append(
         (
-            os.path.join(datasetDirectory, filename),
             os.path.join(
                 ganDirectory, 
                 filenameNoExt + ".gan"),
+            os.path.join(datasetDirectory, filename),
             os.path.join(
                 logFileDirectory, filenameNoExt + ".log"),
             gpuId,
-            ganTrainer))
+            ganTrainer,
+            parzenDirectory,
+            ablationDirectory,
+            kwargs["useScore"]))
   pools = {}
   for gpu in activeGpus:
     pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
   resultmap = {}
-  for gpu, pool in pools.iteritems():
-    resultmap[gpu] = pool.map_async(trainOneGanArgstyle, gpuToTasks[gpu])
-    pool.close()
 
-  for gpu, pool in pools.iteritems():
-    pool.join()
+  if not seqOverride:
+    for gpu, pool in pools.iteritems():
+      resultmap[gpu] = pool.map_async(trainOneGanArgstyle, gpuToTasks[gpu])
+      pool.close()
 
-  for k,v in resultmap.iteritems():
-    finalResults = v.get()
-    for result in finalResults:
-      if isinstance(result, ExceptionWrapper):
-        result.re_raise()
-  logging.getLogger(__name__).info(resultmap)
+    for gpu, pool in pools.iteritems():
+      pool.join()
+
+    for k,v in resultmap.iteritems():
+      finalResults = v.get()
+      for result in finalResults:
+        if isinstance(result, ExceptionWrapper):
+          result.re_raise()
+  else:
+    for gpu, pool in pools.iteritems():
+      for args in gpuToTasks[gpu]:
+        trainOneGanArgstyle(args)
 
 def genDataAndTrainIndividualGansStubTest():
   genDataAndTrainIndividualGans(
@@ -454,7 +490,13 @@ def genDataAndTrainIndividualGansStubTest():
       depth=2,
       procsPerGpu=1,
       minDataPts=5,
-      style="trgan")
+      style="trgan",
+      gdroupout=0.05,
+      useScore=False,
+      seqOverride=True)
+
+# TODO:
+# 1. why is it more pairs with mode_all?
 
 def genDataAndTrainIndividualGansStub():
   genDataAndTrainIndividualGans(
@@ -465,37 +507,45 @@ def genDataAndTrainIndividualGansStub():
       logPer=3,
       genDepth=32,
       depth=32,
-      procsPerGpu=4,
+      procsPerGpu=1,
       lr=1e-2,
-      minDataPts=100,
+      lam=1e-2,
+      minDataPts=50,
       decayPer=10,
       decayRate=0.7,
       batchSize=32,
       gdropout=0.05,
+      useScore=False,
       style="trgan")
 
 def genDataAndTrainIndividualGans(
-    outDirName, datasetFileName, logFileDirectory, **kwargs):
+    outDirName, datasetFileName, logFileDir, **kwargs):
   datasetDir = os.path.join(outDirName, "nounpair_data/")
   shardAndSave(datasetFileName, datasetDir, **kwargs)
 
-  parzenPath = os.path.join(outDirName, "parzen_fits/")
+  parzenDir = os.path.join(outDirName, "parzen_fits/")
+  ablationDir = os.path.join(outDirName, "ablations/")
   gdm = dash.GanDashboardMaker()
   gdm.makeDashboard(
-      parzenPath, logFileDirectory, datasetDir,
+      parzenDir, logFileDir, ablationDir, datasetDir,
       datasetFileName + "_noun2Int",
-      os.path.join(logFileDirectory, "index.php"))
+      os.path.join(logFileDir, "index.php"))
 
   ganLoc = os.path.join(outDirName, "trained_models/")
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
   trainIndividualGans(
-      datasetDir, ganLoc, logFileDirectory, mapBaseName=datasetFileName,
-      **kwargs)
+      datasetDir, ganLoc, logFileDir, parzenDir, ablationDir,
+      mapBaseName=datasetFileName, **kwargs)
 
-def trainCGAN(
-    datasetFileName = "data/models/nngandataTrain_gs_True",
-    ganFileName = "data/models/ganModel", gpu_id=0, lr=1e-2, logPer=5,
+def trainCGAN(ganFileName, *args, **kwargs):
+  nets = trainCGANNoFile(*args, ganSaveBasename = ganFileName, **kwargs)
+  logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
+  torch.save(nets, ganFileName)
+
+def trainCGANNoFile(
+    datasetFileName,
+    ganSaveBasename = None, gpu_id=0, lr=1e-2, logPer=5,
     batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=1e-2, nz=0,
     hiddenSize=pc.IMFEATS, **kwargs):
   # Set up variables.
@@ -520,8 +570,10 @@ def trainCGAN(
   # Whether to ignore the conditioning variable. Useful for baselines.
   ignoreCond = kwargs.get("ignoreCond", False) 
   logFileName = kwargs.get("logFileName", None)
+  useScore = kwargs.get("useScore", False)
   # TODO sanitize for unused variables.
   # Load variables, begin training.
+  logging.getLogger(__name__).info("Loading dataset from %s" % datasetFileName)
   dataset = torch.load(datasetFileName)
   dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False, num_workers=0)
   
@@ -556,11 +608,11 @@ def trainCGAN(
         networkUpdateStep(
             netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id,
             ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion,
-            logPer, lam, epoch, epochs, len(dataloader), logFile)
+            logPer, lam, epoch, epochs, len(dataloader), logFile, useScore)
           
       # save the training files
-      if saveDir is not None and epoch % savePerEpoch == (savePerEpoch - 1):
-        checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganFileName), epoch)
+      if saveDir is not None and ganSaveBasename is not None and epoch % savePerEpoch == (savePerEpoch - 1):
+        checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganSaveBasename), epoch)
         logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
         torch.save((netD, netG), os.path.join(saveDir, checkpointName))
 
@@ -573,14 +625,13 @@ def trainCGAN(
           logging.getLogger(__name__).info("optD: prev rate: %.4f" % param_group['lr'])
           param_group['lr'] = param_group['lr'] * decayRate
           logging.getLogger(__name__).info("optD: new  rate: %.4f" % param_group['lr'])
-  logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
-  torch.save((netD, netG), ganFileName)
+  return netD, netG
 
 # TODO turn this into a class.
 def networkUpdateStep(
     netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, i, 
     style, optimizerD, optimizerG, criterion, l1Criterion, logPer, lam, epoch,
-    epochs, nSamples, logFile):
+    epochs, nSamples, logFile, useScore):
   real_label = 1
   fake_label = 0
   # Update D network
@@ -592,6 +643,8 @@ def networkUpdateStep(
 
     # get scores from realImageAndScore
     scores = realImageAndScore[:,pc.IMFEATS]
+    if not useScore:
+      scores.data.fill_(1)
     output = netD(conditional, realImageAndScore, True)
     label.data.fill_(real_label)
     errD_real = criterion(
@@ -657,12 +710,26 @@ def networkUpdateStep(
               % (epoch, epochs, i, nSamples,
                  errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
 
-def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
+def evaluateGANModelAndAblation(ganModelFile, datasetFileName, ganTrainer, **kwargs):
+  logging.getLogger(__name__).info("Evaluating original model")
+  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, kwargs.get("gpu_id", 0))
+  logging.getLogger(__name__).info("Training ablation")
+  kwargs["ganSaveBasename"] = None
+  nets = ganTrainer.trainNoFile(datasetFileName, ignoreCond=True, **kwargs)
+  logging.getLogger(__name__).info("Evaluating ablation model")
+  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs.get("useScore"), gpu_id=kwargs.get("gpu_id", 0))
+  return {"True Loss": trueLoss, "Ablated Loss:": ablatedLoss}
+
+def evaluateGANModel(ganModelFile, datasetFileName, useScore, gpu_id=2):
+  nets = torch.load(ganModelFile)
+  return evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=gpu_id)
+
+def evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=2):
   batchSize=16
   """
   Evaluate a GAN model generator's image creation ability in a simple way.
   """
-  netD, netG = torch.load(ganModelFile)
+  netD, netG = nets
 
   nz = netG.inputSize
 
@@ -674,7 +741,6 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
       dataset, batch_size=batchSize, shuffle=True, num_workers=0)
   criterion = nn.MSELoss()
   runningTrue = 0.
-  runningGimpy = 0.
   noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
   datasetSize = 0.
   for i, data in tqdm.tqdm(
@@ -689,27 +755,29 @@ def evaluateGANModel(ganModelFile, datasetFileName, gpu_id=2):
         "expected len(data[0][0])=%d to be %d" % \
         (len(data[1][0]), expectedYDataSize)
     # 1. No labels on generator. Calculate square loss.
-    xdata, featuresAndScore = data
-    conditionalData = xdata[:,:12].cuda(gpu_id)
-    scores = featuresAndScore[:,-1].cuda(gpu_id).contiguous().view(-1, 1)
-    conditionalData = torch.cat([conditionalData, scores], 1)
+    conditionals, imageAndScore = data
+    conditionals = conditionals.cuda(gpu_id)
+    scores = imageAndScore[:,-1].cuda(gpu_id).contiguous().view(-1, 1)
+    if not useScore:
+      scores.fill_(1)
     noise.data.normal_(0, 1)
+    batchSize = len(conditionals)
     output = netG(
-        noise[:len(conditionalData)], ag.Variable(conditionalData.cuda(gpu_id),
-            volatile=True), False, ignoreCond=False)
-    expectedFeatures = xdata[:,12 + 3:].cuda(gpu_id).contiguous()
-    scores = scores.view(len(scores), 1).expand(output.size())
+        noise[:batchSize], ag.Variable(conditionals.cuda(gpu_id),
+            volatile=True), True if nz < 1 else False, ignoreCond=False)
+    expectedFeatures = imageAndScore[:,:pc.IMFEATS].cuda(gpu_id).contiguous()
+    expandedScores = scores.expand(output.size())
 
     correctLoss = criterion(
-        ag.Variable(torch.mul(output.data, scores), requires_grad=False), 
-        ag.Variable(torch.mul(expectedFeatures, scores), requires_grad=False))
+        ag.Variable(torch.mul(output.data, expandedScores), requires_grad=False), 
+        ag.Variable(torch.mul(expectedFeatures, expandedScores), requires_grad=False))
 
-    batchSize = len(conditionalData)
     datasetSize += batchSize
 
     runningTrue += correctLoss.data[0] * batchSize
   runningTrue /= datasetSize
   logging.getLogger(__name__).info("True   Loss: %.4f" % runningTrue)
+  return runningTrue
 
 class GanDataLoader(object):
   def __init__(self, filename):
@@ -720,15 +788,15 @@ class GanDataLoader(object):
     if len(self.data) == 0:
       raise Exception("GanDataLoader", "No data found")
     x, y = self.data[0]
-    assert(len(x) == pc.IMFEATS), "Invalid 'x' dimension '%d'" % len(x)
-    assert(len(y) == 13), "Invalid 'y' dimension '%d'" % len(y)
+    assert(len(x) == 12 + 3 + pc.IMFEATS), "Invalid 'x' dimension '%d'" % len(x)
+    assert(len(y) == pc.IMFEATS + 1), "Invalid 'y' dimension '%d'" % len(y)
 
 def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
-  batchSize = 64
+  batchSize = 16
   out = []
   nz = netG.inputSize
   noise = ag.Variable(
-      torch.FloatTensor(64, nz), requires_grad=False).cuda(gpu_id)
+      torch.FloatTensor(batchSize, nz), requires_grad=False).cuda(gpu_id)
   yvar = ag.Variable(yval.expand(batchSize, yval.size(1))).cuda(gpu_id)
   for i in range(nTestPoints):
     noise.data.normal_(0, 1)
@@ -736,12 +804,12 @@ def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
       break
     out = torch.cat(out + [netG(noise, yvar, dropoutOn, ignoreCond=False)], 0)
     out = [out]
-  return out[0]
+  return out[0][:nTestPoints]
 
 def parzenWindowFromFile(ganModelFile, ganDevSet, **kwargs):
   gDiskDevLoader = GanDataLoader(ganDevSet)
   _, netG = torch.load(ganModelFile)
-  parzenWindowProb(netG, gDiskDevLoader.data, **kwargs)
+  return parzenWindowProb(netG, gDiskDevLoader.data, **kwargs)
 
 def parzenWindowProb(netG, devData, **kwargs):
   # TODO this is using ydata as the conditional! It shouldn't.
@@ -754,8 +822,9 @@ def parzenWindowProb(netG, devData, **kwargs):
   gpu_id = kwargs.get("gpu_id", 2)
   logPer = kwargs.get("logPer", 1e12)
   bw_method = kwargs.get("bw_method", "scott")
-  nSamples = kwargs.get("nSamples", 100)
+  nSamples = kwargs.get("nSamples", 10000)
   nTestSamples = kwargs.get("nTestSamples", 100)
+  style = kwargs.get("style", "trgan")
 
   netG = netG.cuda(gpu_id)
 
@@ -775,31 +844,43 @@ def parzenWindowProb(netG, devData, **kwargs):
     image = imageAndScore[:,:pc.IMFEATS]
     if style == "gan":
       conditional = fullConditional[:,:12]
-    elif syle == "trgan":
+    elif style == "trgan":
       conditional = fullConditional
     else:
       raise ValueError("Invalid style '%s'" % style)
     # kde_input is pc.IMFEATSx1
     kde_input = torch.transpose(image, 0, 1).numpy()
     key = tuple(*conditional.numpy().tolist())
+    #logging.getLogger(__name__).info("kde_input: %s" % kde_input)
+    #logging.getLogger(__name__).info("fullConditional: %s" % fullConditional)
     ymap[key].append((kde_input, fullConditional))
 
   probs = {}
   for i, (relevantCond, kdeinAndFC) in tqdm.tqdm(
       enumerate(ymap.iteritems()), total=len(ymap)):
+    #logging.getLogger(__name__).info("KDE IN")
+    #logging.getLogger(__name__).info(kdeinAndFC)
+    #logging.getLogger(__name__).info("<=== KDE IN")
     kdein, fullConditional = zip(*kdeinAndFC)
 
     # Convert conditional back into a tensor. By definition, each element should
     # be the same (or in style == 'gan' case, the elements that aren't the same
     # are irrelevant.
     fullConditional = fullConditional[0]
-    logging.getLogger(__name__).info(fullConditional.size())
+    assert(fullConditional.size() == torch.Size([1, pc.FCSIZE])), \
+        "Invalid fullConditional.size()=%s" % str(fullConditional.size())
 
     dataTensor = getGANChimeras(
         netG, nSamples, fullConditional, gpu_id=gpu_id,
         dropoutOn=True if netG.inputSize < 1 else False)
+    assert(dataTensor.size() == torch.Size([nSamples, pc.IMFEATS])), \
+        "Invalid dataTensor.size()=%s" % str(dataTensor.size())
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
+    # TODO shape is all wrong.
+    #logging.getLogger(__name__).info(kde_train_input)
+    #logging.getLogger(__name__).info(kde_train_input.shape)
     gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
+
     devData = np.concatenate(kdein, axis=1)
     probs[relevantCond] = gpw.evaluate(devData)
     if i % logPer == (logPer - 1):

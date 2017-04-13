@@ -17,27 +17,28 @@ class GanDashboardMaker(object):
     def __init__(self):
         pass
     def makeDashboard(
-            self, parzenPath, trainJpgPath,
+            self, parzenDir, trainJpgDir, ablationDir,
             datasetDirectory, nouncodeToIndexFile, htmlOut):
         htmlMaker = html.HtmlTable()
         indexToNouncode = reverseMap(torch.load(open(nouncodeToIndexFile)))
         shardedDataHandler = gan.ShardedDataHandler(datasetDirectory)
-        dashParzenHandler = gan.ShardedDataHandler(parzenPath, ".parzen")
-        plotHandler = gan.ShardedDataHandler(trainJpgPath, ".log.jpg")
+        dashParzenHandler = gan.ShardedDataHandler(parzenDir, ".parzen")
+        plotHandler = gan.ShardedDataHandler(trainJpgDir, ".log.jpg")
+        ablationHandler = gan.ShardedDataHandler(ablationDir, ".ablation")
         for i, (n1, n2) in tqdm.tqdm(enumerate(shardedDataHandler.iterNounPairs())):
             tableRow = []
             tableRow.append((n1, n2))
             intcodes = map(lambda x: indexToNouncode[x], (n1, n2))
             tableRow.append(intcodes)
             tableRow.append(sdu.decodeNouns(*intcodes))
-            tableRow.append(html.ImgRef(src='"/%s"' % 
+            tableRow.append(html.ImgRef(src='/%s' % 
                 os.path.relpath(plotHandler.keyToPath((n1, n2)), "data")))
-            tableRow.append("TODO PARZEN") # This will need to be php... TODO
+            tableRow.append(html.PhpTextFile('%s' % 
+                os.path.abspath(dashParzenHandler.keyToPath((n1, n2)))))
             tableRow.append("|data|=%d" % getNSamplesFromDatafile(shardedDataHandler.keyToPath((n1, n2))))
 
-            tableRow.append("TODO ablation thing")
+            tableRow.append(html.PhpTextFile('%s' % 
+                os.path.abspath(ablationHandler.keyToPath((n1, n2)))))
             htmlMaker.addRow(tableRow)
-        logging.getLogger(__name__).info("output:")
-        logging.getLogger(__name__).info(str(htmlMaker))
         with open(htmlOut, "w") as out:
             out.write(str(htmlMaker))
