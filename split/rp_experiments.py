@@ -1,11 +1,10 @@
-import utils as ut
 import cPickle
 import gensim.models.word2vec as w2v
 import itertools as it
 import json
 import copy
 import PairRep as pr
-import utils as ut
+import splitutils as ut
 import numpy as np
 import role_probabilities as rp
 import data_utils as du

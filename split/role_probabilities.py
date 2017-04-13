@@ -5,7 +5,7 @@ import json
 import itertools
 import os
 import cPickle
-import utils as ut
+import splitutils as ut
 import itertools as it
 import copy
 import numpy as np

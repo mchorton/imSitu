@@ -1,5 +1,5 @@
 import role_probabilities as rp
-import utils as ut
+import splitutils as ut
 import json
 import data_utils as du
 

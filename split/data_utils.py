@@ -3,6 +3,9 @@ from nltk import wordnet as wn
 import copy
 import collections
 import random
+import os
+import tqdm
+import utils.mylogger as logging
 
 class ImgDep():
   def __init__(self, name):
@@ -125,6 +128,62 @@ def countZS(desiredSet, trainDeps, imgdeps):
       nZero += 1
   return nZero
 
+# TODO should be able to rewrite old func. in terms of this.
+# TODO want to know how many are 0-shot.
+def moveSome(init, softlim, hardlim, imgdeps):
+  orig = init
+  moved = set()
+
+  cont = True
+  moveThresh = 1
+  while cont:
+    toMove = set()
+    for img in orig:
+      if len(toMove) + len(moved) > softlim:
+        break
+      considerMoving = imgdeps[img].minNeededForZS(orig)
+      # TODO enforce hardcap. Should I also check softlim here?
+      if len(considerMoving) <= moveThresh and len(considerMoving) > 0 and len(considerMoving) + len(moved) + len(toMove) < hardlim:
+        toMove |= considerMoving
+    orig -= toMove
+    moved |= toMove
+    if len(moved) >= softlim or len(moved) + moveThresh >= hardlim:
+      break
+    if len(toMove) == 0:
+      moveThresh += 1
+  return orig, moved
+
+# TODO test this.
+def get_perverb_zssplit(init, softTrainMin, hardTrainMin, imgdeps):
+  """
+  These limits are, amounts that must be in the training set!
+  """
+  def get_numerical_lim(lim, n):
+    if lim < 1.:
+      return n - int(lim * n)
+    return n - lim
+
+  # TODO make it so that softlim / hardlim is sometimes a count, sometimes a percent
+  # Get a per-verb sharding of the initial data.
+  sharding = collections.defaultdict(set)
+  for img in init:
+    sharding[imgdeps[img].verb].add(img)
+
+  # Move through each shard. Move verbs until enough have been moved.
+  cont = True
+  orig = set()
+  moved = set()
+  for verb, imgs in tqdm.tqdm(sharding.iteritems(), total=len(sharding), desc="splitting per verb"):
+    softlim = get_numerical_lim(softTrainMin, len(imgs))
+    hardlim = get_numerical_lim(hardTrainMin, len(imgs))
+    #print "verb=%s, softlim=%s, hardlim=%s" % (verb, str(softlim), str(hardlim))
+    origcontrib, movedcontrib = moveSome(imgs, softlim, hardlim, imgdeps)
+    orig |= origcontrib
+    moved |= movedcontrib
+    #print "verb=%s, orig=%s, moved=%s" % (verb, str(len(orig)), str(len(moved)))
+  return orig, moved
+
+
 def get_uniform_split(init, desiredOtherCount):
   """
   Split the data in 'init' into two sets, with sizes 
@@ -146,15 +205,18 @@ def filterZeroShot(dev, train, imgdeps):
     newsplit[label].add(img)
   return newsplit["zs"], newsplit["waste"]
 
-def saveDatasets(splits, full_data):
+def saveDatasets(splits, full_data, outDir=None):
   """
   Saves splits of the full_data set, as enumerated by the map "splits"
   splits is a dictionary from "dataset_name" -> set(images_in_dataset)
   """
   for name, imgset in splits.iteritems():
     data = {img: full_data[img] for img in imgset}
-    print "Writing file %s" % name
-    with open(name + ".json", "w") as f:
+    outfile = name + ".json"
+    if outDir is not None:
+      outfile = os.path.join(outDir, outfile)
+    logging.getLogger(__name__).info("Writing file %s" % outfile)
+    with open(outfile, "w") as f:
       json.dump(data, f)
 
 def getVerbCounts(filename):
