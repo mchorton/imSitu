@@ -132,7 +132,7 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
 #def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
 
 # Produce the vrnData used for later experiments.
-def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True):
+def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=None):
 
   # gets a json object describing image pairs.
   # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
@@ -161,9 +161,11 @@ def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man
     myDecodedObj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), du.decodeNoun(stuff[0]), du.decodeNoun(stuff[1]), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[3]))), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[4])))])
   #suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "strictImgSep", str(strictImgSep), "noOnlyOneRole", str(noOnlyOneRole))
   suffix = "%s__%s__%s__%s__%s__%s__%s" % (str(thresh), str(freqthresh), str(bestNounOnly), str(blacklistprs), str(noThreeLabel), str(strictImgSep), str(noOnlyOneRole))
-  #return myobj, myDecodedObj
-  json.dump(myobj, open(dirName + "json_summary_%s.json" % str(suffix), "w+"))
-  json.dump(myDecodedObj, open(dirName + "json_summary_decoded_%s.json" % str(suffix), "w+"))
+
+  if outLoc is None:
+    outLoc = dirName + "json_summary_%s.json" % str(suffix)
+  json.dump(myobj, open(outLoc, "w+"))
+  json.dump(myDecodedObj, open("decoded_" + outLoc, "w+"))
 
 # TODO make the distance metric better.
 def summaryStub():

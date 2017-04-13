@@ -15,6 +15,7 @@ import utils.mylogger as logging
 import tqdm
 import collections
 import os
+import split.rp_experiments as rpe
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -31,6 +32,11 @@ VRNDATATEST = "data/pairLearn/vrn_test.json"
 VRNDATA = "data/pairLearn/vrn.json"
 COMPFEATDIR = "data/comp_fc7/"
 REGFEATDIR = "data/regression_fc7/"
+
+# TODO I changed thresh to 'inf', from '2'
+# TODO should I just remove all filtering?
+def makeVrnData():
+  rpe.getJsonSummary("data/vecStyle/", thresh=float('inf'), freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")
 
 def getContextVectors(
     contextVREmbedding, contextWordEmbedding, context, batchSize):

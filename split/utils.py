@@ -88,7 +88,7 @@ class Cacher(object):
   def __init__(self, directory, serializer = cPickle.dump, deserializer = cPickle.load, cacheSize = 50):
     self.directory = os.path.dirname(directory)
     if not os.path.isdir(self.directory):
-      raise FileNotFoundError
+      raise OSError("directory '%s' doesn't exist" % self.directory)
     self.serializer = serializer
     self.deserializer = deserializer
     self.cacheSize = cacheSize

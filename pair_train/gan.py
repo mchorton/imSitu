@@ -419,7 +419,7 @@ def trainOneGan(
   parResults = ""
   try:
     probs = parzenWindowFromFile(ganFileName, datasetFileName, gpu_id=gpuId)
-    parResults = str(probs)[:2000]
+    parResults = str(probs)
   except Exception as e:
     parResults = str(e)
   with open(parzenName, "w") as parFile:
@@ -510,6 +510,26 @@ def genDataAndTrainIndividualGansStub():
       procsPerGpu=1,
       lr=1e-2,
       lam=1e-2,
+      minDataPts=50,
+      decayPer=10,
+      decayRate=0.7,
+      batchSize=32,
+      gdropout=0.05,
+      useScore=False,
+      style="trgan")
+
+def exp3():
+  genDataAndTrainIndividualGans(
+      "data/multigan_3/",
+      "data/pairLearn/comptrain.pyt_mode_max",
+      "data/runs/multigan_3/",
+      epochs=200,
+      logPer=3,
+      genDepth=32,
+      depth=32,
+      procsPerGpu=1,
+      lr=1e-4,
+      lam=1e-4,
       minDataPts=50,
       decayPer=10,
       decayRate=0.7,
