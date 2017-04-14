@@ -36,9 +36,18 @@ REGFEATDIR = "data/regression_fc7/"
 # TODO I changed thresh to 'inf', from '2'
 # TODO should I just remove all filtering?
 def makeVrnData():
+  datadir = "data/split/"
+  import split.splitters as spsp
+  spsp.splitTrainDevTestMinInTrain(datadir)
+
+  trainSetName = os.path.join(datadir, "zsTrain.json")
+
+  distdir = "data/vecStyle/"
   import split.rp_experiments as rpe
-  rpe.generateAllDistVecStyle("data/vecStyle")
-  rpe.getJsonSummary("data/vecStyle/", thresh=float('inf'), freqthresh=10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")
+  rpe.generateAllDistVecStyle(distdir, trainSetName)
+
+  vrndir = "data/vrnData/"
+  rpe.getVrnData(distdir, trainSetName, vrndir, thresh=float('inf'), freqthresh=10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")
 
 def getContextVectors(
     contextVREmbedding, contextWordEmbedding, context, batchSize):

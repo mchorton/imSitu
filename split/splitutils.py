@@ -50,7 +50,10 @@ def mytostr(*args):
   return tuple(["" if arg is None else arg for arg in args])
 
 def getImgUrl(name):
-  return '<img src="https://s3.amazonaws.com/my89-frame-annotation/public/images_256/%s">' % (name)
+  return '<img src="%s">' % (getUrl(name))
+
+def getUrl(name):
+  return 'https://s3.amazonaws.com/my89-frame-annotation/public/images_256/%s' % (name)
 
 def getImgUrls(names):
   ret = set()

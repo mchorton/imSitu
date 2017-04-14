@@ -12,43 +12,44 @@ import collections
 import cPickle
 import multiprocessing
 import os
+import utils.mylogger as logging
+import tqdm
+import split.v2pos.htmlgen as html
+import splitutils as sut
 
 vecStyleDirectory = "data/vecStyle"
 
-def saveAllDistances(data, vrProbs, outdir, nProc=None):
+def saveAllDistances(data, vrProbs, outdir, nProc=None, useCache=False):
   v2r = du.getv2r(data)
 
   needUpdate = False
 
-  for i, (verb,roles) in enumerate(v2r.iteritems()):
-    print "Considering verb %d/%d" % ((i + 1), len(v2r))
+  for i, (verb,roles) in tqdm.tqdm(
+      enumerate(v2r.iteritems()), total=len(v2r),
+      desc="getting distance on per-verb basis"):
     outfile = "%s%s.pik" % (outdir, verb)
-    if os.path.isfile(outfile):
-      print "...Found precached results for verb '%s'" % (verb)
+    if useCache and os.path.isfile(outfile):
       continue
     needUpdate = True
-    print "...Computing all distances for verb '%s'..." % verb
     vrn2dist = {role: vrProbs.getAllSimilarities(verb, role) for role in roles}
-    print "...Saving distances for verb '%s' to '%s'..." % (verb, outfile)
     cPickle.dump(vrn2dist, open(outfile, "w"))
-    print "...done."
   return needUpdate
 
-def generateAllDistVecStyle(loc):
-  dataset = ["zsTrain.json"]
+def generateAllDistVecStyle(outdir, dataset):
+  if not os.path.exists(outdir):
+    os.makedirs(outdir)
+  logging.getLogger(__name__).info("Getting dataset")
   data = du.get_joint_set(dataset)
-
+  logging.getLogger(__name__).info("Getting vrn2Imgs")
   vrn2Imgs = du.getvrn2Imgs(data)
 
-  print "Getting Wholistic Sim Obj"
+  logging.getLogger(__name__).info("Getting Wholistic Sim Obj")
   wsc = rp.WholisticSimCalc(vrn2Imgs)
 
-  vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam()) # TODO want to also save the whole sim calc.
-  needUpdate = saveAllDistances(data, vrProbs, loc)
-  # TODO this object doesn't have anything in it.
-  # Maybe the lambda is shielding it? But I doubt that.
+  vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam())
+  needUpdate = saveAllDistances(data, vrProbs, outdir)
   if needUpdate:
-    cPickle.dump(wsc, open("data/vecStyle/wsc.pik", "w"))
+    cPickle.dump(wsc, open(os.path.join(outdir, "wsc.pik"), "w"))
 
 def generateW2VDist(dirName):
   modelFile = "data/word2vec/GoogleNews-vectors-negative300.bin"
@@ -131,16 +132,24 @@ def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "w
 #def makeHTML(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, measureImgDistWithBest=True, maxDbgLen = 1000):
 
 # Produce the vrnData used for later experiments.
-def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=None):
+def getVrnData(*args, **kwargs):
+  outDir = args[2]
+  if not os.path.exists(outDir):
+    os.makedirs(outDir)
+  argsFile = os.path.join(outDir, "args.txt")
+  with open(argsFile, "w") as argFile:
+    argFile.write("ARGS=%s\nKWARGS=%s" % (str(args), str(kwargs)))
+  return getVrnDataActual(*args, **kwargs)
+
+def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True):
 
   # gets a json object describing image pairs.
   # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
 
-  cacher = ut.Cacher(dirName)
-  toShow = cacher.run(rp.getSimilaritiesList, dirName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
+  toShow = rp.getSimilaritiesList(distdir, datasetName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
 
   # Need a DataExaminer to get the canonical representation for an image.
-  dataset = du.get_joint_set("zsTrain.json")
+  dataset = du.get_joint_set(datasetName)
   examiner = du.DataExaminer()
   examiner.analyze(dataset)
 
@@ -161,11 +170,37 @@ def getJsonSummary(dirName, thresh=2, freqthresh = 10, blacklistprs = [set(["man
   #suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "strictImgSep", str(strictImgSep), "noOnlyOneRole", str(noOnlyOneRole))
   suffix = "%s__%s__%s__%s__%s__%s__%s" % (str(thresh), str(freqthresh), str(bestNounOnly), str(blacklistprs), str(noThreeLabel), str(strictImgSep), str(noOnlyOneRole))
 
-  if outLoc is None:
-    outLoc = dirName + "json_summary_%s.json" % str(suffix)
+  outLoc = os.path.join(outDir, "vrnData.json")
+  decodedLoc = os.path.join(outDir, "_decoded_vrnData.json")
   json.dump(myobj, open(outLoc, "w+"))
-  json.dump(myDecodedObj, open("decoded_" + outLoc, "w+"))
+  json.dump(myDecodedObj, open(decodedLoc, "w+"))
+
+  makeMyHtml(outDir, myDecodedObj)
+
+def makeMyHtml(outDir, decodedVrnData, maxElems = 500):
+  logging.getLogger(__name__).info("Making HTML")
+
+  # sort by score.
+  sortedData = sorted(decodedVrnData, key=lambda x: x[0])
+
+  stride = max(int(len(sortedData) / maxElems), 1)
+
+  table = html.HtmlTable()
+  for elem in decodedVrnData[::stride]:
+    # Change the image names into proper URLs
+    elem[1] = html.ImgRef(src=sut.getUrl(elem[1]))
+    elem[2] = html.ImgRef(src=sut.getUrl(elem[2]))
+    table.addRow(*elem)
+
+  argsFile = os.path.join(outDir, "args.txt")
+  arguments = html.PhpTextFile(os.path.abspath(argsFile))
+
+  maker = html.HtmlMaker()
+  maker.addElement(arguments)
+  maker.addElement(table)
+
+  maker.save(os.path.join(outDir, "index.php"))
 
 # TODO make the distance metric better.
-def summaryStub():
-  getJsonSummary("data/vecStyle/", thresh=2, freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
+def vrnDataStub():
+  getVrnData("data/vecStyle/", thresh=2, freqthresh = 10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True)

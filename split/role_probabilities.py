@@ -9,6 +9,8 @@ import splitutils as ut
 import itertools as it
 import copy
 import numpy as np
+import tqdm
+import utils.mylogger as logging
 
 def threegramProb(key, givenIndex, wildcardCounts):
   #exit(1) # TODO deprecated.
@@ -125,7 +127,7 @@ class VRProb():
   def getProb(self, key, givenIndex):
     prob = self.pfunc(key, givenIndex, self.wildcardCounts)
     if prob > 1:
-      print "bad prob=%s for key: %s" % (str(prob), str(key))
+      logging.getLogger(__name__).info("bad prob=%s for key: %s" % (str(prob), str(key)))
     return prob
 
   def match(self, test, target, roleIndex): # TODO unused.
@@ -181,9 +183,9 @@ def getSimilarities(verb, role, nouns, vrProbs):
       similarities[(noun1, noun2)] = vrProbs.getDistance(verb, role, noun1, noun2)
   return similarities
 
-def runGetSimilarities():
-  datasets = ["zsTrain.json"]
-  data = du.get_joint_set(datasets)
+# TODO delete this?
+def runGetSimilarities(datasetLoc):
+  data = du.get_joint_set(datasetLoc)
 
   chosen = ["riding"]
   vrProbs = VRProbDispatcher(data, chosen)
@@ -289,37 +291,28 @@ class SimilaritiesListCalculator(object):
         json.dump(self.simList, open(self.outname, "w"))
     return self.simList
 
-def getAveragedRankings(directory):
-  dataset = ["zsTrain.json"]
-  data = du.get_joint_set(dataset)
+def getAveragedRankings(distdir, data):
+  """
+  distdir - directory with saved distance data
+  data - the actual dataset (usually from zsTrain.json)
+  """
+  logging.getLogger(__name__).info("Getting averaged rankings")
   v2r = du.getv2r(data)
-  # 
   v2r2nn2score = {}
-  print "loading data..."
-  v2r2nn2score = {verb: cPickle.load(open("%s%s.pik" % (directory, verb), "r")) for verb in v2r}
-  print "...done loading data"
+  logging.getLogger(__name__).info("loading data")
+  v2r2nn2score = {verb: cPickle.load(open("%s%s.pik" % (distdir, verb), "r")) for verb in v2r}
 
-  print "getting nn2vr2score"
+  logging.getLogger(__name__).info("getting nn2vr2score")
   nn2vr2score = getnn2vr2score(v2r2nn2score)
-  cPickle.dump(nn2vr2score, open("%s%s.pik" % (directory, "nn2vr2score"), "w"))
-  print "...done"
+  cPickle.dump(nn2vr2score, open("%s%s.pik" % (distdir, "nn2vr2score"), "w"))
 
-  print "combining..."
-  # Choose how to combine the values.
-  print "sample values:"
-  for n, stuff in enumerate(nn2vr2score.iteritems()):
-    print stuff
-    if n > 5:
-      break
-  flatAvg = {nn: np.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()} # Flat average, doesn't care about # of images.
-  print "...done"
-
-  #outname = "%s%s.pik" % (directory, "flat_avg")
-  #print "saving flat averages to %s" % outname
-  #cPickle.dump(flatAvg, open(outname, "w"))
+  logging.getLogger(__name__).info("combining values")
+  flatAvg = {nn: np.mean(vr2score.values()) for nn, vr2score in nn2vr2score.iteritems()}
   return flatAvg
 
-def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
+# TODO this should take some logging object, and output HTML that shows stats
+# about what happened during the run.
+def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
   # toShow2.append([n1, n2, sim, one, two, tuple(vr)])
   """
   Get output like:
@@ -329,30 +322,21 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
   freqthresh: if a noun occurs freqthresh or fewer times, it'll be excluded.
   blacklistprs: each pair (n1, n2) that matches 
   """
-  datasets = ["zsTrain.json"]
-  #datasets = ["zsSmall.json"]
-  #similarities = cPickle.load(open("%sflat_avg.pik" % dirName, "r"))
-  cacher = ut.Cacher(dirName)
-  similarities = cacher.run(getAveragedRankings, dirName)
+  train = du.get_joint_set(datasetLoc)
+
+  similarities = getAveragedRankings(dirName, train)
   desired = [(k[0], k[1], v) for k,v in similarities.iteritems()]
   desired.sort(key=lambda x: x[2])
   similarities = desired
 
-  train = du.get_joint_set(datasets)
+  logging.getLogger(__name__).info("Getting vrn2Imgs")
+  vrn2Imgs = du.getvrn2Imgs(train)
+  logging.getLogger(__name__).info("Getting n2vr2Imgs")
+  n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
 
-  cacher = ut.Cacher(dirName)
-  vrn2Imgs = cacher.runMyFile("vrn2Imgs", du.getvrn2Imgs, train)
-  n2vr2Imgs = cacher.runMyFile("getn2vr2Imgs", du.getn2vr2Imgs, vrn2Imgs)
-
-  #vrn2Imgs = du.getvrn2Imgs(train)
-
-  #n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
-  # TODO cache this!
-
-  #toShow = {} # Map from (n1,n2,sim) -> set([(img1, img2), ...])
   toShow2 = [] # list like (n1,n2,sim,img1,img2)
 
-  print "Total num sims: %d" % len(similarities)
+  logging.getLogger(__name__).info("Total num sims: %d" % len(similarities))
 
   imgdeps = du.getImageDeps(vrn2Imgs)
 
@@ -367,11 +351,9 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
   nPassSame = 0
   nPassDiff = 0
   nNotBestLabel = 0 # This number is meaningless since I didn't check roles before incrementing. Oh well.
-  print "looping..."
-  for i, (n1, n2, sim) in enumerate(similarities):
-    #print "i=%d" % i
-    if i % (len(similarities) / 100) == 0:
-      print "--> %d %% done." % (int((100 * i) // len(similarities)))
+  logging.getLogger(__name__).info("looping...")
+  for i, (n1, n2, sim) in tqdm.tqdm(enumerate(similarities), total=len(similarities), desc="Calculating similarities object..."):
+    #logging.getLogger(__name__).info("i=%d" % i)
     if n1 == "" or n2 == "":
       continue
     if set([du.decodeNoun(n1),du.decodeNoun(n2)]) in blacklistprs:
@@ -401,19 +383,19 @@ def getSimilaritiesList(dirName, thresh=2., freqthresh = 10, blacklistprs = [set
             toShow2.append([n1, n2, sim, one, two, tuple(vr)])
           else:
             nPassDiff += 1
-  
-  print "nPassSame=%s" % str(nPassSame)
-  print "nPassDiff=%s" % str(nPassDiff)
-  print "nNotBestLabel=%s" % str(nNotBestLabel)
-  print "stats=%s" % str(stats)
+  logging.getLogger(__name__).info("nPassSame=%s" % str(nPassSame))
+  logging.getLogger(__name__).info("nPassDiff=%s" % str(nPassDiff))
+  logging.getLogger(__name__).info("nNotBestLabel=%s" % str(nNotBestLabel))
+  logging.getLogger(__name__).info("stats=%s" % str(stats))
 
-  print "There are %d valid pairs" % len(toShow2)
+  logging.getLogger(__name__).info("There are %d valid pairs" % len(toShow2))
   toShow2 = [t for t in toShow2 if t[2] < thresh] # TODO don't do this filtering yet! Just save them all
-  print "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2))
-  print "Expanding (n1, n2) => (n1, n2), (n2, n1)"
+  logging.getLogger(__name__).info("Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2)))
+  logging.getLogger(__name__).info("Expanding (n1, n2) => (n1, n2), (n2, n1)")
   nextShow = []
   # Generate reverse pairs.
-  for elem in toShow2:
+  for elem in tqdm.tqdm(
+      toShow2, total=len(toShow2), desc="Generating reverse pairs"):
     nextShow.append(elem)
     newelem = copy.deepcopy(elem)
     newelem[0] = elem[1]
