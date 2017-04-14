@@ -16,6 +16,7 @@ import tqdm
 import collections
 import os
 import split.rp_experiments as rpe
+import utils.methods as mt
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -35,7 +36,12 @@ REGFEATDIR = "data/regression_fc7/"
 
 # TODO I changed thresh to 'inf', from '2'
 # TODO should I just remove all filtering?
+# TODO: Create a function that runs everything from end to end, making all
+# necessary folders, etc. Get a few clean runs of experimentation.
+# it should also run all old/new style GANs, and make dashboards that look nice.
+# TODO save the logs from function calls to the folder for later investigation.
 def makeVrnData():
+  sys.exit(1) # this is broken TODO
   datadir = "data/split/"
   import split.splitters as spsp
   spsp.splitTrainDevTestMinInTrain(datadir)
@@ -300,24 +306,12 @@ def makeAllData():
   makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
   makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
 
-def makeDirIfNeeded(filename):
-  """
-  Create the given directory, or the directory in which the file would be
-  located.
-  # filename: the name of the file or directory
-  """
-  directory = os.path.dirname(filename)
-  if not os.path.exists(directory):
-    logging.getLogger(__name__).info("Creating directory %s" % directory)
-    os.makedirs(directory)
-
-def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
-  assert(style == ""), "Style no longer supported TODO"
+def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
   extra = "_mode_%s" % mode
   trainLoc += extra
   devLoc += extra
 
-  makeDirIfNeeded(trainLoc)
+  mt.makeDirIfNeeded(trainLoc)
 
   logging.getLogger(__name__).info(
       "Making data, train='%s', dev='%s'" % (trainLoc, devLoc))
@@ -337,19 +331,18 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max", style=""):
   json.dump(list(devImgNames), open(devImgNameFile, "w+"))
 
   dataSet = makeDataSet(
-      trainLoc, featDir, vrnData, trainImgNames, mode=mode, style=style)
+      trainLoc, featDir, vrnData, trainImgNames, mode=mode)
   logging.getLogger(__name__).info("Saving data to %s" % trainLoc)
   torch.save(dataSet, trainLoc)
 
   dataSet = makeDataSet(
-      devLoc, featDir, vrnData, devImgNames, mode=mode, style=style)
+      devLoc, featDir, vrnData, devImgNames, mode=mode)
   logging.getLogger(__name__).info("Saving data to %s" % devLoc)
   torch.save(dataSet, devLoc)
 
 # TODO refactor this a bit. Also, make some stability tests!
 def makeDataSet(
-    trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all",
-    style=""):
+    trainLoc, featureDirectory, vrnData, whitelistedImgNames, mode="all"):
   """
   Create a pytorch TensorDataset at 'outFileName'. It contains input suitable
   for the models trained to generate image features.
@@ -357,8 +350,6 @@ def makeDataSet(
              function doesn't save the dataset, but it needs a pathname from
              which to generate intermediate file names)
   ...
-  style - "" (default), "trgan", "gan"
-          Dictates the output format of our dataset.
   mode - if "max", a unique (im2Name, str(tRole), noun2) will only allow a
          single im1Name to be paired with it.
 

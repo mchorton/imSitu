@@ -1,2 +1,3 @@
 IMFEATS = 1024
 FCSIZE = 12 + 3 + IMFEATS
+SPLITDIR = "data/split/"

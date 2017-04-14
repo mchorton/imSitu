@@ -5,6 +5,7 @@
 import os
 import split.splitters as spsp
 import split.rp_experiments as rpe
+import pair_train.exp as exp
 testdatadir = "testing/_int_spsptest"
 distdir = "testing/_int_dist/"
 vrndir = "testing/_int_vrndata/"
@@ -16,6 +17,7 @@ def main():
             distdir, trainName)
 
     vrnStub()
+    exp.runTestExp()
 
 def vrnStub():
     rpe.getVrnData(distdir, trainName, vrndir, thresh=float('inf'), freqthresh=1, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True)

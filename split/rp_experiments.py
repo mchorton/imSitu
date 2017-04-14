@@ -172,6 +172,7 @@ def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, bl
 
   outLoc = os.path.join(outDir, "vrnData.json")
   decodedLoc = os.path.join(outDir, "_decoded_vrnData.json")
+  logging.getLogger(__name__).info("Writing vrndata to %s" % outLoc)
   json.dump(myobj, open(outLoc, "w+"))
   json.dump(myDecodedObj, open(decodedLoc, "w+"))
 
@@ -199,7 +200,9 @@ def makeMyHtml(outDir, decodedVrnData, maxElems = 500):
   maker.addElement(arguments)
   maker.addElement(table)
 
-  maker.save(os.path.join(outDir, "index.php"))
+  htmlOut = os.path.join(outDir, "index.php")
+  logging.getLogger(__name__).info("Writing vrndata html to %s" % htmlOut)
+  maker.save(htmlOut)
 
 # TODO make the distance metric better.
 def vrnDataStub():
