@@ -16,9 +16,9 @@ class DirConfig(object):
         mt.makeDirIfNeeded(self._basedir)
         # Absolute directories
         self.featdir = "data/comp_fc7/"
+        self.datadir = self._rebase("data/split/")
 
         # directories relative to base directory
-        self.datadir = self._rebase("data/split/")
         self.distdir = self._rebase("data/distance/")
         self.pairdir = self._rebase("data/pairs/")
         self.vrndir = self._rebase("data/vrndata/")
@@ -112,16 +112,3 @@ def runTestExp():
     mp.kwargs["lr"] = 1e-5
 
     runner.generateGanModels(MultiganTrainer(mp))
-
-def makeVrnData():
-  sys.exit(1) # this is broken TODO
-  datadir = "data/split/"
-  spsp.splitTrainDevTestMinInTrain(datadir)
-
-  trainSetName = os.path.join(datadir, "zsTrain.json")
-
-  distdir = "data/vecStyle/"
-  rpe.generateAllDistVecStyle(distdir, trainSetName)
-
-  vrndir = "data/vrnData/"
-  rpe.getVrnData(distdir, trainSetName, vrndir, thresh=float('inf'), freqthresh=10, blacklistprs = [], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, outLoc=VRNDATA + "_MOD")

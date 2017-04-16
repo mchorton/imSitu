@@ -142,9 +142,10 @@ def getVrnData(*args, **kwargs):
   return getVrnDataActual(*args, **kwargs)
 
 def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True):
-
-  # gets a json object describing image pairs.
-  # pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
+  """
+  gets a json object describing image pairs.
+  pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
+  """
 
   toShow = rp.getSimilaritiesList(distdir, datasetName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
 

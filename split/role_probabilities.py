@@ -312,8 +312,7 @@ def getAveragedRankings(distdir, data):
 
 # TODO this should take some logging object, and output HTML that shows stats
 # about what happened during the run.
-def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True): # TODO sometimes similarity is good, sometimes it's bad. Don't filter low values.
-  # toShow2.append([n1, n2, sim, one, two, tuple(vr)])
+def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blacklistprs = [set(["man", "woman"])], bestNounOnly = True, noThreeLabel = True, noOnlyOneRole = True, strictImgSep = True):
   """
   Get output like:
   [[noun1, noun2, similarity, img1, img2, tuple(verb, role)], ...]
@@ -331,6 +330,7 @@ def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blackli
 
   logging.getLogger(__name__).info("Getting vrn2Imgs")
   vrn2Imgs = du.getvrn2Imgs(train)
+  logging.getLogger(__name__).info("vrn2Imgs is: %s" % str(vrn2Imgs))
   logging.getLogger(__name__).info("Getting n2vr2Imgs")
   n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
 
@@ -389,8 +389,9 @@ def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blackli
   logging.getLogger(__name__).info("stats=%s" % str(stats))
 
   logging.getLogger(__name__).info("There are %d valid pairs" % len(toShow2))
-  toShow2 = [t for t in toShow2 if t[2] < thresh] # TODO don't do this filtering yet! Just save them all
-  logging.getLogger(__name__).info("Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2)))
+  toShow2 = [t for t in toShow2 if t[2] < thresh]
+  logging.getLogger(__name__).info(
+      "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2)))
   logging.getLogger(__name__).info("Expanding (n1, n2) => (n1, n2), (n2, n1)")
   nextShow = []
   # Generate reverse pairs.
