@@ -17,6 +17,11 @@ import collections
 import os
 import split.rp_experiments as rpe
 import utils.methods as mt
+import itertools as it
+import split.v2pos.htmlgen as html
+import split.data_utils as du
+import copy
+import constants as pc # short for pair_train constants
 
 TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
@@ -306,11 +311,135 @@ def makeAllData():
   makeData(TORCHCOMPTRAINDATA, TORCHCOMPDEVDATA, COMPFEATDIR, VRNDATA)
   makeData(TORCHREGTRAINDATA, TORCHREGDEVDATA, REGFEATDIR, VRNDATA)
 
-def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
-  extra = "_mode_%s" % mode
-  trainLoc += extra
-  devLoc += extra
+def makeDataNice(*args, **kwargs):
+    trainDir = os.path.dirname(args[0]) + "/"
+    mt.makeDirIfNeeded(trainDir)
+    with open(os.path.join(trainDir, "args.txt"), "w+") as argfile:
+            argfile.write("ARGS:%s\nKWARGS:%s\n" % (str(args), str(kwargs)))
+    makeData(*args, **kwargs)
+    featDir = args[2]
+    makeDataHtml(trainDir, featDir)
 
+def strGetDict(mydict):
+    return lambda x: mydict.get(x, "")
+
+def intGetDict(mydict):
+    return lambda x: mydict.get(x, 0)
+
+class PairDataManager(object):
+    # TODO rely on this class for data reading / investigating. Remove
+    # hard-coded assumptions on layout of data
+    def __init__(self, directory, featDir):
+        self._directory = directory
+        self._andecoder = os.path
+        trainLoc = os.path.join(self._directory, "pairtrain.pyt")
+        self._role2intFile = "%s_role2Int" % trainLoc
+        self._noun2intFile = "%s_noun2Int" % trainLoc
+        self._verb2intFile = "%s_verb2Int" % trainLoc
+        self._verb2LenFile = "%s_verb2Len" % trainLoc
+        self._featDir = featDir
+
+        self.role2int = torch.load(self._role2intFile)
+        self.noun2int = torch.load(self._noun2intFile)
+        self.verb2int = torch.load(self._verb2intFile)
+        self.verb2len = torch.load(self._verb2LenFile)
+
+        self.int2role = mt.reverseMap(self.role2int)
+        self.int2noun = mt.reverseMap(self.noun2int)
+        self.int2verb = mt.reverseMap(self.verb2int)
+        self.len2verb = mt.reverseMap(self.verb2len)
+        """
+def getIm2Feats(featureDirectory, imNames):
+  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in imNames } # Should have all names in it.
+  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
+  return imToFeatures
+
+        """
+        imnames = os.listdir(self._featDir)
+        self.name2feat = getIm2Feats(self._featDir, imnames)
+        self._feat2name = { tuple(v): k for k,v in self.name2feat.iteritems()}
+
+        for k,v in it.islice(self._feat2name.iteritems(), 10):
+            #logging.getLogger(__name__).info("_f2n[%s]=%s]" % (str(k), str(v)))
+            logging.getLogger(__name__).info("type(k)=%s" % str(type(k)))
+
+    def getImnameFromFeats(self, feats):
+        logging.getLogger(__name__).info(type(feats))
+        logging.getLogger(__name__).info(type(tuple(feats)))
+        return self._feat2name[tuple(np.array(feats.view(pc.IMFEATS).numpy(), dtype=np.float64))]   
+
+    def partdecodeToFulldecode(self, partlyDecodedAn):
+        ret = copy.copy(partlyDecodedAn)
+        for i, samp in enumerate(partlyDecodedAn):
+            if i % 2 == 1:
+                ret[i] = du.decodeNoun(samp)
+        return ret
+    def decodeCond(self, cond):
+        assert(cond.size(1) == 1039), "Invalid cond!"
+        return cond[:,:12], cond[:,13], cond[:,14], cond[:,15:], cond[:,15:]
+    def decodeFeatsAndScore(self, fas):
+        assert(fas.size(1) == 1025), "Invalid feats-and-score!"
+        return fas[:,:1024], fas[:,1024]
+        
+
+    # TODO what to do about values that are too big?
+    def annotationsintsToCodes(self, annotations):
+        assert(annotations.size() == torch.Size((1, 12))), "Invalid annotations"
+        anList = list(annotations.view(12))
+
+        ret = []
+        for i, elem in enumerate(anList):
+            if i % 2 == 0:
+                ret.append(self.int2role.get(elem, ""))
+            else:
+                ret.append(self.int2noun.get(elem, ""))
+        return ret
+
+def makeDataHtml(outDir, featDir):
+    """
+    Create an HTML file inside outDir that shows useful things about the dataset
+    """
+    maker = html.HtmlMaker()
+
+    argsFile = os.path.join(outDir, "args.txt")
+    arguments = html.PhpTextFile(os.path.abspath(argsFile))
+
+    maker.addElement(arguments)
+
+    table = html.HtmlTable()
+    table.addRow(
+            "ANNOTATIONS", "ROLE", "N1", "N2", "SOURCE FEATURES",
+            "TARGET FEATURES", "SCORE")
+
+    dataset = torch.load(os.path.join(outDir, "pairtrain.pyt"))
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+    pdm = PairDataManager(outDir, featDir)
+    for i, data in tqdm.tqdm(
+            enumerate(it.islice(dataloader, 20), 0),
+            total=min(len(dataloader), 20), desc="gathering samples"):
+        cond, imfeatsAndScore = data
+        annotations, role, n1, n2, sourceFeats = pdm.decodeCond(cond)
+        targetFeats, score = pdm.decodeFeatsAndScore(imfeatsAndScore)
+
+        partlyDecodedAn = pdm.annotationsintsToCodes(annotations)
+        fullyDecodedAn = pdm.partdecodeToFulldecode(partlyDecodedAn)
+        annotationsStr = "%s\n%s\n%s" % \
+                (str(annotations), str(partlyDecodedAn), str(fullyDecodedAn))
+        roleStr = "%s\n%s" % (str(role), str(pdm.int2role.get(role[0,], "")))
+        n1Str = "%s\n%s" % (str(n1), str(pdm.int2noun.get(n1[0,], "")))
+        n2Str = "%s\n%s" % (str(n2), str(pdm.int2noun.get(n2[0,], "")))
+        sourceStr = "%s\n%s" % (str(sourceFeats), pdm.getImnameFromFeats(sourceFeats))
+        targetStr = "%s\n%s" % (str(targetFeats), pdm.getImnameFromFeats(targetFeats))
+        table.addRow(annotationsStr, roleStr, n1Str, n2Str, sourceStr, targetStr, score)
+
+        
+    maker.addElement(table)
+    outname = os.path.join(outDir, "index.php")
+    logging.getLogger(__name__).info("Saving php to '%s'" % outname)
+    maker.save(os.path.join(outDir, "index.php"))
+    sys.exit(1)
+
+def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
   mt.makeDirIfNeeded(trainLoc)
 
   logging.getLogger(__name__).info(
@@ -339,6 +468,13 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
       devLoc, featDir, vrnData, devImgNames, mode=mode)
   logging.getLogger(__name__).info("Saving data to %s" % devLoc)
   torch.save(dataSet, devLoc)
+
+
+def getIm2Feats(featureDirectory, imNames):
+  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in imNames } # Should have all names in it.
+  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
+  return imToFeatures
+
 
 # TODO refactor this a bit. Also, make some stability tests!
 def makeDataSet(
@@ -401,8 +537,7 @@ def makeDataSet(
   logging.getLogger(__name__).info("role2int size: %d" % len(role2Int))
   logging.getLogger(__name__).info("noun2Int size: %d" % len(noun2Int))
 
-  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in im1Names } # Should have all names in it.
-  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
+  imToFeatures = getIm2Feats(featureDirectory, im1Names)
 
   # Loop through, building train and dev sets.
   xData = []

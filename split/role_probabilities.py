@@ -330,7 +330,7 @@ def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blackli
 
   logging.getLogger(__name__).info("Getting vrn2Imgs")
   vrn2Imgs = du.getvrn2Imgs(train)
-  logging.getLogger(__name__).info("vrn2Imgs is: %s" % str(vrn2Imgs))
+  #logging.getLogger(__name__).info("vrn2Imgs is: %s" % str(vrn2Imgs))
   logging.getLogger(__name__).info("Getting n2vr2Imgs")
   n2vr2Imgs = du.getn2vr2Imgs(vrn2Imgs)
 

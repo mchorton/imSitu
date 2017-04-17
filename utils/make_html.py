@@ -1,4 +1,4 @@
-import split.utils as sut
+import split.splitutils as sut
 import os
 
 def makeHTML(directoryName):

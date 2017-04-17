@@ -1,7 +1,11 @@
 import data_utils as du
 import os
 import utils.mylogger as logging
+import json
+import utils.methods as mt
 def splitTrainDevTestMinInTrain(outDir, test=False):
+  # Note: this random seed is NOT the seed used to generate the data we used!
+  # it was fixed after (data was originally generated without a seed)
   # set random seed
   import random
   random.seed(331900)
@@ -60,3 +64,27 @@ def splitTrainDevTestMinInTrain(outDir, test=False):
         "Data set %s has %d points" % (str(k), len(v)))
 
   du.saveDatasets(finalSplit, full_data, outDir)
+
+def selectsome(datadict, npoints):
+    chosen = {}
+    for i, (k,v) in enumerate(datadict.iteritems()):
+        chosen[k] = v
+    return chosen
+
+def copyDataSplit(outDir, fromDir, test=False):
+    mt.makeDirIfNeeded(outDir)
+    logging.getLogger(__name__).info("Loading Data")
+    datasets = ["train.json", "dev.json", "test.json"]
+    full_data = du.get_joint_set(datasets)
+
+    for filename in os.listdir(fromDir):
+        frompath = os.path.join(fromDir, filename)
+        with open(frompath, "r") as splitfile:
+            imgnames = splitfile.read().splitlines()
+        if test:
+            imgnames = imgnames[:1000]
+        data = {k: full_data[k] for k in imgnames}
+        outname = os.path.join(outDir, os.path.splitext(filename)[0] + ".json")
+        logging.getLogger(__name__).info("Writing output to %s" % outname)
+        with open(outname, "w+") as outfile:
+            json.dump(data, outfile)

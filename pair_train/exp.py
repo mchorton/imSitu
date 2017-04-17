@@ -13,20 +13,28 @@ import utils.mylogger as logging
 class DirConfig(object):
     def __init__(self, basedir="."):
         self._basedir = basedir
+        """
+        if os.path.exists(self._basedir):
+            raise ValueError(
+                    "Base directory '%s' already exists. Cowardly exiting "
+                    "to avoid overwriting experiment" % self._basedir)
+        """
         mt.makeDirIfNeeded(self._basedir)
         # Absolute directories
         self.featdir = "data/comp_fc7/"
-        self.datadir = self._rebase("data/split/")
+        self.splitdir = "splits/"
 
         # directories relative to base directory
+        self.localsplitdir = self._rebase("data/split/")
         self.distdir = self._rebase("data/distance/")
         self.pairdir = self._rebase("data/pairs/")
         self.vrndir = self._rebase("data/vrndata/")
         self.multigandir = self._rebase("multigan/")
         self.multiganlogdir = self._rebase("multiganlogdir/")
 
-        self.trainSetName = os.path.join(self.datadir, "zsTrain.json")
+        self.trainSetName = os.path.join(self.localsplitdir, "zsTrain.json")
         self.vrnDataName = os.path.join(self.vrndir, "vrnData.json")
+        # TODO these should be automatic
         self.pairDataTrain = os.path.join(self.pairdir, "pairtrain.pyt")
         self.pairDataDev = os.path.join(self.pairdir, "pairdev.pyt")
     def _rebase(self, directory):
@@ -37,7 +45,10 @@ class DataGenerator(object):
         self._config = dirConfig
         self._test = test
     def generate(self):
-        spsp.splitTrainDevTestMinInTrain(self._config.datadir, test=self._test)
+        """
+        spsp.copyDataSplit(
+                self._config.localsplitdir, self._config.splitdir,
+                test=self._test)
         rpe.generateAllDistVecStyle(
                 self._config.distdir,
                 self._config.trainSetName)
@@ -50,7 +61,8 @@ class DataGenerator(object):
                 includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
         # Now, get the pairwise gan data.
         # TODO get some metadata / json stuff here!
-        pairnn.makeData(
+        """
+        pairnn.makeDataNice(
                 self._config.pairDataTrain,
                 self._config.pairDataDev,
                 self._config.featdir,
@@ -94,11 +106,16 @@ class MultiganTrainer(object):
     def __init__(self, parameters):
         self._parameters = parameters
     def generate(self):
-        genDataAndTrainIndividualGans(
+        gan.genDataAndTrainIndividualGans(
                 *self._parameters.args,
                 **self._parameters.kwargs)
 
 def runTestExp():
+    """
+    if os.path.exists("data/test_exp/"):
+        import shutil
+        shutil.rmtree("data/test_exp/")
+    """
     dirconfig = DirConfig("data/test_exp/")
     runner = MultiganExperimentRunner()
     runner.generateData(DataGenerator(dirconfig, test=True))
@@ -107,7 +124,7 @@ def runTestExp():
     mp.kwargs["epochs"] = 2
     mp.kwargs["depth"] = 2
     mp.kwargs["genDepth"] = 2
-    mp.kwargs["minDataPoints"] = 5
+    mp.kwargs["minDataPts"] = 3
     mp.kwargs["procsPerGpu"] = 5
     mp.kwargs["lr"] = 1e-5
 
