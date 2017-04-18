@@ -188,6 +188,7 @@ def makeMyHtml(outDir, decodedVrnData, maxElems = 500):
   stride = max(int(len(sortedData) / maxElems), 1)
 
   table = html.HtmlTable()
+  table.addRow("Score", "Img1", "Img2", "Swapped Role", "Noun1", "Noun2", "Annotation1", "Annotation2")
   for elem in decodedVrnData[::stride]:
     # Change the image names into proper URLs
     elem[1] = html.ImgRef(src=sut.getUrl(elem[1]))

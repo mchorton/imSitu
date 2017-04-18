@@ -3,8 +3,12 @@ def imgref(img):
 
 class HtmlMaker(object):
     def __init__(self):
+        self._title = ""
         self.elements = []
     def addElement(self, element):
+        """
+        Add an element to the body of the HTML
+        """
         self.elements.append(element)
     def toStr(self):
         ret = self.getPreamble()
@@ -12,11 +16,14 @@ class HtmlMaker(object):
             ret += str(elem)
         ret += self.getCoda()
         return ret
+    def addTitle(self, text):
+        self._title = text
     def getPreamble(self):
         return (
                 "<!DOCTYPE html>\n"
                 "<html>\n"
                 "<head>\n"
+                "<title>%s</title>"
                 "<style>\n"
                 "table, th, td {\n"
                 "      border: 1px solid black;\n"
@@ -24,7 +31,7 @@ class HtmlMaker(object):
                 "td { white-space:pre }\n"
                 "</style>\n"
                 "</head>\n"
-                "<body>\n")
+                "<body>\n") % self._title
     def getCoda(self):
         return (
                 "</body>\n"
@@ -78,6 +85,13 @@ class ImgRef(Element):
         kwargs["src"] = '"%s"' % kwargs["src"]
         super(ImgRef, self).__init__("img", **kwargs)
 
+class HRef(object):
+    def __init__(self, link, text):
+        self._link = link
+        self._text = text
+    def __str__(self):
+        return '<a href="%s">%s</a>' % (self._link, self._text)
+
 class PhpTextFile(object):
     def __init__(self, filename):
         self.filename = filename
@@ -89,5 +103,16 @@ class Paragraph(object):
         self.text = text
     def __str__(self):
         return "<p>%s</p>\n" % str(self.text)
-        
 
+class Title(object):
+    def __init__(self, text):
+        self._text = text
+    def __str__(self):
+        return "<title>%s</title>" % self._text
+
+class Heading(object):
+    def __init__(self, level, text):
+        self._level = level
+        self._text = text
+    def __str__(self):
+        return "<h%d>%s</h%d>" % (self._level, self._text, self._level)

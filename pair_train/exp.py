@@ -7,19 +7,21 @@ import split.rp_experiments as rpe
 import split.splitters as spsp
 import split.rp_experiments as rpe
 import utils.mylogger as logging
+import split.v2pos.htmlgen as html
+import itertools as it
 
 # This should probably be multiple objects?
 # TODO why am I not using zsDev.json anywhere?
 class DirConfig(object):
     def __init__(self, basedir="."):
-        self._basedir = basedir
+        self.basedir = basedir
         """
-        if os.path.exists(self._basedir):
+        if os.path.exists(self.basedir):
             raise ValueError(
                     "Base directory '%s' already exists. Cowardly exiting "
-                    "to avoid overwriting experiment" % self._basedir)
+                    "to avoid overwriting experiment" % self.basedir)
         """
-        mt.makeDirIfNeeded(self._basedir)
+        mt.makeDirIfNeeded(self.basedir)
         # Absolute directories
         self.featdir = "data/comp_fc7/"
         self.splitdir = "splits/"
@@ -38,7 +40,7 @@ class DirConfig(object):
         self.pairDataTrain = os.path.join(self.pairdir, "pairtrain.pyt")
         self.pairDataDev = os.path.join(self.pairdir, "pairdev.pyt")
     def _rebase(self, directory):
-        return os.path.join(self._basedir, directory)
+        return os.path.join(self.basedir, directory)
 
 class DataGenerator(object):
     def __init__(self, dirConfig, test=False):
@@ -55,6 +57,7 @@ class DataGenerator(object):
                 self._config.trainSetName)
         # TODO how best to manage these parameters?
         logging.getLogger(__name__).info("vrndir: %s" % self._config.vrndir)
+        """
         rpe.getVrnData(
                 self._config.distdir, self._config.trainSetName,
                 self._config.vrndir, thresh=float('inf'), freqthresh=10,
@@ -62,13 +65,29 @@ class DataGenerator(object):
                 includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
         # Now, get the pairwise gan data.
         # TODO get some metadata / json stuff here!
-        """
         pairnn.makeDataNice(
                 self._config.pairDataTrain,
                 self._config.pairDataDev,
                 self._config.featdir,
                 self._config.vrnDataName,
                 mode="max")
+
+class PhpGenerator(object):
+    def __init__(self, rootDir):
+        self._rootDir = rootDir
+    def generate(self):
+        htmlMaker = html.HtmlMaker()
+        htmlMaker.addTitle("Experiment Dashboard")
+        htmlMaker.addElement(html.Heading(1, "Experiment Dashboard"))
+        for dirpath, dirnames, filenames in os.walk(self._rootDir):
+            for filename in it.ifilter(lambda x: x.endswith(".php"), filenames):
+                link = os.path.relpath(os.path.join(dirpath, filename),
+                                       self._rootDir)
+                htmlMaker.addElement(
+                        html.HRef(link, link))
+                htmlMaker.addElement(html.Paragraph("\n"))
+        htmlMaker.save(os.path.join(self._rootDir, "index.php"))
+
 
 class MultiganExperimentRunner(object):
     def __init__(self):
@@ -79,6 +98,8 @@ class MultiganExperimentRunner(object):
         self._run_rerooted(dataGenerator.generate)
     def generateGanModels(self, ganTrainer):
         self._run_rerooted(ganTrainer.generate)
+    def generatePhpDirectory(self, phpGenerator):
+        phpGenerator.generate()
 
 class MultiganParameters(object):
     def __init__(self, dirConfig):
@@ -132,3 +153,4 @@ def runTestExp():
     mp.kwargs["seqOverride"] = False
 
     runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
