@@ -27,6 +27,7 @@ import itertools as it
 import pair_train.dashboard as dash
 import re
 import subprocess
+import utils.methods as mt
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -541,6 +542,7 @@ def exp3():
 
 def genDataAndTrainIndividualGans(
     outDirName, datasetFileName, logFileDir, **kwargs):
+  mt.makeDirIfNeeded(logFileDir)
   with open(os.path.join(logFileDir, "args.txt"), "w+") as argfile:
     argfile.write("ARGS=%s\nKWARGS=%s" % (str((outDirName, datasetFileName, logFileDir)), str(kwargs)))
   datasetDir = os.path.join(outDirName, "nounpair_data/")
@@ -584,7 +586,6 @@ def trainCGANNoFile(
   mapBaseName = kwargs.get("mapBaseName", datasetFileName)
   role2Int = torch.load("%s_role2Int" % mapBaseName)
   noun2Int = torch.load("%s_noun2Int" % mapBaseName)
-  verb2Len = torch.load("%s_verb2Len" % mapBaseName)
   nVRs = max(role2Int.values()) + 1
   nWords = max(noun2Int.values()) + 1
   wESize = 128

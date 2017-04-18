@@ -15,12 +15,10 @@ import itertools as it
 class DirConfig(object):
     def __init__(self, basedir="."):
         self.basedir = basedir
-        """
         if os.path.exists(self.basedir):
             raise ValueError(
                     "Base directory '%s' already exists. Cowardly exiting "
                     "to avoid overwriting experiment" % self.basedir)
-        """
         mt.makeDirIfNeeded(self.basedir)
         # Absolute directories
         self.featdir = "data/comp_fc7/"
@@ -47,24 +45,18 @@ class DataGenerator(object):
         self._config = dirConfig
         self._test = test
     def generate(self):
-        # TODO temporary commenting measures.
-        """
         spsp.copyDataSplit(
                 self._config.localsplitdir, self._config.splitdir,
                 test=self._test)
         rpe.generateAllDistVecStyle(
                 self._config.distdir,
                 self._config.trainSetName)
-        # TODO how best to manage these parameters?
         logging.getLogger(__name__).info("vrndir: %s" % self._config.vrndir)
-        """
         rpe.getVrnData(
                 self._config.distdir, self._config.trainSetName,
                 self._config.vrndir, thresh=float('inf'), freqthresh=10,
                 blacklistprs = [], bestNounOnly = True, noThreeLabel = True,
                 includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
-        # Now, get the pairwise gan data.
-        # TODO get some metadata / json stuff here!
         pairnn.makeDataNice(
                 self._config.pairDataTrain,
                 self._config.pairDataDev,
@@ -93,7 +85,7 @@ class MultiganExperimentRunner(object):
     def __init__(self):
         pass
     def _run_rerooted(self, func, *args, **kwargs):
-        func(*args, **kwargs) # TODO ...
+        func(*args, **kwargs)
     def generateData(self, dataGenerator):
         self._run_rerooted(dataGenerator.generate)
     def generateGanModels(self, ganTrainer):
@@ -133,11 +125,9 @@ class MultiganTrainer(object):
                 **self._parameters.kwargs)
 
 def runTestExp():
-    """
     if os.path.exists("data/test_exp/"):
         import shutil
         shutil.rmtree("data/test_exp/")
-    """
     dirconfig = DirConfig("data/test_exp/")
     runner = MultiganExperimentRunner()
     runner.generateData(DataGenerator(dirconfig, test=True))
@@ -152,5 +142,15 @@ def runTestExp():
     mp.kwargs["lr"] = 1e-5
     mp.kwargs["seqOverride"] = False
 
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+
+# TODO why do "mode='all'" and "mode='max'" produce diff numbers of pairs?
+def runDefaultExp():
+    dirconfig = DirConfig("data/manygan_default/")
+    runner = MultiganExperimentRunner()
+    runner.generateData(DataGenerator(dirconfig))
+
+    mp = MultiganParameters(dirconfig)
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
