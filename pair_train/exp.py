@@ -45,6 +45,7 @@ class DataGenerator(object):
         self._config = dirConfig
         self._test = test
     def generate(self):
+        # TODO temporary commenting measures.
         """
         spsp.copyDataSplit(
                 self._config.localsplitdir, self._config.splitdir,
@@ -122,10 +123,12 @@ def runTestExp():
 
     mp = MultiganParameters(dirconfig)
     mp.kwargs["epochs"] = 2
+    mp.kwargs["logPer"] = 1
     mp.kwargs["depth"] = 2
     mp.kwargs["genDepth"] = 2
     mp.kwargs["minDataPts"] = 3
     mp.kwargs["procsPerGpu"] = 5
     mp.kwargs["lr"] = 1e-5
+    mp.kwargs["seqOverride"] = False
 
     runner.generateGanModels(MultiganTrainer(mp))

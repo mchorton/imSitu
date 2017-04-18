@@ -22,6 +22,7 @@ import split.v2pos.htmlgen as html
 import split.data_utils as du
 import copy
 import constants as pc # short for pair_train constants
+import split.splitutils as sut
 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
 TORCHCOMPDEVDATA = "data/pairLearn/compdev.pyt"
@@ -399,7 +400,7 @@ def makeDataHtml(outDir, featDir):
     table = html.HtmlTable()
     table.addRow(
             "ANNOTATIONS", "ROLE", "N1", "N2", "SOURCE FEATURES",
-            "TARGET FEATURES", "SCORE")
+            "TARGET FEATURES", "SOURCE IMG", "TARGET IMG", "SCORE")
 
     dataset = torch.load(os.path.join(outDir, "pairtrain.pyt"))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
@@ -422,16 +423,20 @@ def makeDataHtml(outDir, featDir):
                     du.decodeNoun(pdm.int2noun[noun]))
         n1Str = nounstr(n1[0,])
         n2Str = nounstr(n2[0,])
-        sourceStr = "%s\n%s" % (str(sourceFeats), pdm.getImnameFromFeats(sourceFeats))
-        targetStr = "%s\n%s" % (str(targetFeats), pdm.getImnameFromFeats(targetFeats))
-        table.addRow(annotationsStr, roleStr, n1Str, n2Str, sourceStr, targetStr, score)
-
+        srcName = pdm.getImnameFromFeats(sourceFeats)
+        tarName = pdm.getImnameFromFeats(targetFeats)
+        sourceStr = "%s\n%s" % (str(sourceFeats), srcName)
+        targetStr = "%s\n%s" % (str(targetFeats), tarName)
+        srcIm = html.ImgRef(src=sut.getUrl(srcName))
+        tarIm = html.ImgRef(src=sut.getUrl(tarName))
+        table.addRow(
+                annotationsStr, roleStr, n1Str, n2Str, sourceStr, targetStr,
+                srcIm, tarIm, score)
         
     maker.addElement(table)
     outname = os.path.join(outDir, "index.php")
     logging.getLogger(__name__).info("Saving php to '%s'" % outname)
     maker.save(os.path.join(outDir, "index.php"))
-    sys.exit(1)
 
 def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
   mt.makeDirIfNeeded(trainLoc)

@@ -19,26 +19,33 @@ class GanDashboardMaker(object):
     def makeDashboard(
             self, parzenDir, trainJpgDir, ablationDir,
             datasetDirectory, nouncodeToIndexFile, htmlOut):
-        htmlMaker = html.HtmlTable()
+        htmlTable = html.HtmlTable()
         indexToNouncode = reverseMap(torch.load(open(nouncodeToIndexFile)))
         shardedDataHandler = gan.ShardedDataHandler(datasetDirectory)
         dashParzenHandler = gan.ShardedDataHandler(parzenDir, ".parzen")
         plotHandler = gan.ShardedDataHandler(trainJpgDir, ".log.jpg")
         ablationHandler = gan.ShardedDataHandler(ablationDir, ".ablation")
+        htmlTable.addRow(
+                "N1, N2", "Training Graph", "Parzen Fits", "Num Data Points",
+                "Losses")
         for i, (n1, n2) in tqdm.tqdm(enumerate(shardedDataHandler.iterNounPairs())):
             tableRow = []
-            tableRow.append((n1, n2))
             intcodes = map(lambda x: indexToNouncode[x], (n1, n2))
-            tableRow.append(intcodes)
-            tableRow.append(sdu.decodeNouns(*intcodes))
-            tableRow.append(html.ImgRef(src='/%s' % 
-                os.path.relpath(plotHandler.keyToPath((n1, n2)), "data")))
-            tableRow.append(html.PhpTextFile('%s' % 
+            tableRow.append("%s\n%s\n%s" % (str((n1, n2)), str(intcodes), str(sdu.decodeNouns(*intcodes))))
+            tableRow.append(html.ImgRef(
+                    src='/%s' % os.path.relpath(
+                            plotHandler.keyToPath((n1, n2)), ".")))
+            tableRow.append(html.PhpTextFile(
                 os.path.abspath(dashParzenHandler.keyToPath((n1, n2)))))
             tableRow.append("|data|=%d" % getNSamplesFromDatafile(shardedDataHandler.keyToPath((n1, n2))))
 
             tableRow.append(html.PhpTextFile('%s' % 
                 os.path.abspath(ablationHandler.keyToPath((n1, n2)))))
-            htmlMaker.addRow(tableRow)
-        with open(htmlOut, "w") as out:
-            out.write(str(htmlMaker))
+            htmlTable.addRow(*tableRow)
+        htmlMaker = html.HtmlMaker()
+
+        htmlMaker.addElement(html.PhpTextFile(os.path.abspath(
+                os.path.join(trainJpgDir, "args.txt"))))
+
+        htmlMaker.addElement(htmlTable)
+        htmlMaker.save(htmlOut)

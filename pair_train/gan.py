@@ -26,6 +26,7 @@ import tblib.pickling_support
 import itertools as it
 import pair_train.dashboard as dash
 import re
+import subprocess
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -540,6 +541,8 @@ def exp3():
 
 def genDataAndTrainIndividualGans(
     outDirName, datasetFileName, logFileDir, **kwargs):
+  with open(os.path.join(logFileDir, "args.txt"), "w+") as argfile:
+    argfile.write("ARGS=%s\nKWARGS=%s" % (str((outDirName, datasetFileName, logFileDir)), str(kwargs)))
   datasetDir = os.path.join(outDirName, "nounpair_data/")
   shardAndSave(datasetFileName, datasetDir, **kwargs)
 
@@ -554,9 +557,17 @@ def genDataAndTrainIndividualGans(
   ganLoc = os.path.join(outDirName, "trained_models/")
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
+  # Start a process to monitor the log directory and create graph outputs.
+  logging.getLogger(__name__).info("making graph-creation process")
+  graphmaker = subprocess.Popen(
+      'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stderr=subprocess.STDOUT, shell=True)
   trainIndividualGans(
       datasetDir, ganLoc, logFileDir, parzenDir, ablationDir,
       mapBaseName=datasetFileName, **kwargs)
+  # TODO output process logs elsewhere.
+  graphmaker.terminate()
+  graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stderr=subprocess.STDOUT, shell=True)
+  graphmaker.wait()
 
 def trainCGAN(ganFileName, *args, **kwargs):
   nets = trainCGANNoFile(*args, ganSaveBasename = ganFileName, **kwargs)
@@ -834,6 +845,8 @@ def parzenWindowFromFile(ganModelFile, ganDevSet, **kwargs):
 def parzenWindowProb(netG, devData, **kwargs):
   # TODO this is using ydata as the conditional! It shouldn't.
   # I need to fix many things about this function.
+  # TODO with only 5k datapoints, this runs a 12G gpu out of memory. Seems
+  # like it shouldn't... I should 
   """
   nSamples - number of points to draw from generator when making distribution
   nTestSamples - number of points to draw from devData for testing
@@ -842,7 +855,7 @@ def parzenWindowProb(netG, devData, **kwargs):
   gpu_id = kwargs.get("gpu_id", 2)
   logPer = kwargs.get("logPer", 1e12)
   bw_method = kwargs.get("bw_method", "scott")
-  nSamples = kwargs.get("nSamples", 10000)
+  nSamples = kwargs.get("nSamples", 5000)
   nTestSamples = kwargs.get("nTestSamples", 100)
   style = kwargs.get("style", "trgan")
 
@@ -871,16 +884,11 @@ def parzenWindowProb(netG, devData, **kwargs):
     # kde_input is pc.IMFEATSx1
     kde_input = torch.transpose(image, 0, 1).numpy()
     key = tuple(*conditional.numpy().tolist())
-    #logging.getLogger(__name__).info("kde_input: %s" % kde_input)
-    #logging.getLogger(__name__).info("fullConditional: %s" % fullConditional)
     ymap[key].append((kde_input, fullConditional))
 
   probs = {}
   for i, (relevantCond, kdeinAndFC) in tqdm.tqdm(
       enumerate(ymap.iteritems()), total=len(ymap)):
-    #logging.getLogger(__name__).info("KDE IN")
-    #logging.getLogger(__name__).info(kdeinAndFC)
-    #logging.getLogger(__name__).info("<=== KDE IN")
     kdein, fullConditional = zip(*kdeinAndFC)
 
     # Convert conditional back into a tensor. By definition, each element should
@@ -896,13 +904,10 @@ def parzenWindowProb(netG, devData, **kwargs):
     assert(dataTensor.size() == torch.Size([nSamples, pc.IMFEATS])), \
         "Invalid dataTensor.size()=%s" % str(dataTensor.size())
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
-    # TODO shape is all wrong.
-    #logging.getLogger(__name__).info(kde_train_input)
-    #logging.getLogger(__name__).info(kde_train_input.shape)
     gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
 
     devData = np.concatenate(kdein, axis=1)
-    probs[relevantCond] = gpw.evaluate(devData)
+    probs[relevantCond] = gpw.logpdf(devData)
     if i % logPer == (logPer - 1):
       logging.getLogger(__name__).info("number of x points: %d" % len(kdein))
       logging.getLogger(__name__).info(
