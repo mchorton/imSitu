@@ -23,7 +23,6 @@ import split.data_utils as du
 import copy
 import constants as pc # short for pair_train constants
 
-TORCHCOMPVERBLENGTH = "data/pairLearn/comptrain.pyt_verb2Len" 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
 TORCHCOMPDEVDATA = "data/pairLearn/compdev.pyt"
 TORCHREGTRAINDATA = "data/pairLearn/regtrain.pyt"
@@ -70,7 +69,7 @@ def getContextVectors(
   return context_vectors
 
 class ImTransNet(nn.Module):
-    def __init__(self, imFeatures, verb2Len, depth, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
+    def __init__(self, imFeatures, depth, nHidden, nOutput, nWords, WESize, nVRs, vrESize):
         super(ImTransNet, self).__init__()
         nInput = 0
         li = 1e-3
@@ -336,18 +335,15 @@ class PairDataManager(object):
         self._role2intFile = "%s_role2Int" % trainLoc
         self._noun2intFile = "%s_noun2Int" % trainLoc
         self._verb2intFile = "%s_verb2Int" % trainLoc
-        self._verb2LenFile = "%s_verb2Len" % trainLoc
         self._featDir = featDir
 
         self.role2int = torch.load(self._role2intFile)
         self.noun2int = torch.load(self._noun2intFile)
         self.verb2int = torch.load(self._verb2intFile)
-        self.verb2len = torch.load(self._verb2LenFile)
 
         self.int2role = mt.reverseMap(self.role2int)
         self.int2noun = mt.reverseMap(self.noun2int)
         self.int2verb = mt.reverseMap(self.verb2int)
-        self.len2verb = mt.reverseMap(self.verb2len)
         """
 def getIm2Feats(featureDirectory, imNames):
   imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in imNames } # Should have all names in it.
@@ -359,13 +355,7 @@ def getIm2Feats(featureDirectory, imNames):
         self.name2feat = getIm2Feats(self._featDir, imnames)
         self._feat2name = { tuple(v): k for k,v in self.name2feat.iteritems()}
 
-        for k,v in it.islice(self._feat2name.iteritems(), 10):
-            #logging.getLogger(__name__).info("_f2n[%s]=%s]" % (str(k), str(v)))
-            logging.getLogger(__name__).info("type(k)=%s" % str(type(k)))
-
     def getImnameFromFeats(self, feats):
-        logging.getLogger(__name__).info(type(feats))
-        logging.getLogger(__name__).info(type(tuple(feats)))
         return self._feat2name[tuple(np.array(feats.view(pc.IMFEATS).numpy(), dtype=np.float64))]   
 
     def partdecodeToFulldecode(self, partlyDecodedAn):
@@ -376,7 +366,7 @@ def getIm2Feats(featureDirectory, imNames):
         return ret
     def decodeCond(self, cond):
         assert(cond.size(1) == 1039), "Invalid cond!"
-        return cond[:,:12], cond[:,13], cond[:,14], cond[:,15:], cond[:,15:]
+        return cond[:,:12], cond[:,12], cond[:,13], cond[:,14], cond[:,15:]
     def decodeFeatsAndScore(self, fas):
         assert(fas.size(1) == 1025), "Invalid feats-and-score!"
         return fas[:,:1024], fas[:,1024]
@@ -425,9 +415,13 @@ def makeDataHtml(outDir, featDir):
         fullyDecodedAn = pdm.partdecodeToFulldecode(partlyDecodedAn)
         annotationsStr = "%s\n%s\n%s" % \
                 (str(annotations), str(partlyDecodedAn), str(fullyDecodedAn))
-        roleStr = "%s\n%s" % (str(role), str(pdm.int2role.get(role[0,], "")))
-        n1Str = "%s\n%s" % (str(n1), str(pdm.int2noun.get(n1[0,], "")))
-        n2Str = "%s\n%s" % (str(n2), str(pdm.int2noun.get(n2[0,], "")))
+        roleStr = "%s\n%s" % (str(role), str(pdm.int2role.get(role[0,], "MISSING")))
+        def nounstr(noun):
+            return "%s\n%s\n%s" % (
+                    str(noun), str(pdm.int2noun.get(noun, "MISSING")),
+                    du.decodeNoun(pdm.int2noun[noun]))
+        n1Str = nounstr(n1[0,])
+        n2Str = nounstr(n2[0,])
         sourceStr = "%s\n%s" % (str(sourceFeats), pdm.getImnameFromFeats(sourceFeats))
         targetStr = "%s\n%s" % (str(targetFeats), pdm.getImnameFromFeats(targetFeats))
         table.addRow(annotationsStr, roleStr, n1Str, n2Str, sourceStr, targetStr, score)
@@ -522,16 +516,13 @@ def makeDataSet(
   allNounsUsed = all_nouns 
   noun2Int = \
       {noun: index for index, noun in enumerate(sorted(list(allNounsUsed)))}
+  # TODO I think this is unused, since we only go from roles to ints.
   verb2Int = {verb: index for index, verb in enumerate(sorted(list(all_verbs)))}
   logging.getLogger(__name__).debug("Done getting maps")
-
-  verb2Len = {}
-  for (k,v) in verb2Int.items(): verb2Len[verb2Int[k]] = v
 
   torch.save(role2Int, "%s_role2Int" % trainLoc)
   torch.save(noun2Int, "%s_noun2Int" % trainLoc)
   torch.save(verb2Int, "%s_verb2Int" % trainLoc)
-  torch.save(verb2Len, "%s_verb2Len" % trainLoc)
 
   logging.getLogger(__name__).info("verb2Int size: %d" % len(verb2Int))
   logging.getLogger(__name__).info("role2int size: %d" % len(role2Int))
@@ -569,7 +560,8 @@ def makeDataSet(
             mv = d
             best = _item
         vrnData.append(best)
-  for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
+  for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(
+        enumerate(vrnData), total=len(vrnData)):
     anitems = [] 
     for (k,v) in an1.items():
       rid = role2Int[make_tuple(k)]
@@ -634,9 +626,8 @@ def runModel(
 
   role2Int = torch.load("%s_role2Int" % trainLoc)
   noun2Int = torch.load("%s_noun2Int" % trainLoc)
-  verb2Len = torch.load("%s_verb2Len" % trainLoc)
 
-  nVRs = max(role2Int.values()) + 1
+  nVRs = max(role2Int.values()) + 1 # TODO shouldn't add one... ?
   nWords = max(noun2Int.values()) + 1
   WESize = 256
   vrESize = 256
@@ -646,7 +637,7 @@ def runModel(
   if modelType == "nn":
     print "running nn"
     net = ImTransNet(
-        indim - (3+12), verb2Len, depth, nHidden, outdim, nWords, WESize, nVRs,
+        indim - (3+12), depth, nHidden, outdim, nWords, WESize, nVRs,
         vrESize).cuda()
   elif modelType == "dot":
     net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda()
