@@ -1,6 +1,7 @@
 import os
 import utils.mylogger as logging
 import json
+import itertools as it
 def makeDirIfNeeded(filename):
   """
   Create the given directory, or the directory in which the file would be
@@ -22,3 +23,16 @@ def reverseMap(mydict):
 
 def getDictLam(mydict):
     return lambda x: mydict[x]
+
+def histString(histogram):
+    """
+    Represent a np.histogram in a nice / readable way.
+    """
+    hist, binEdges = histogram
+    del histogram
+    ret = "[" + "<%s>" % str(binEdges[0])
+    binEdges = binEdges[1:]
+    for val, edge in it.izip(hist, binEdges):
+        ret += " %s <%s>" % (val, edge)
+    return ret + ")"
+

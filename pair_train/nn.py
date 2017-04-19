@@ -23,6 +23,7 @@ import split.data_utils as du
 import copy
 import constants as pc # short for pair_train constants
 import split.splitutils as sut
+import data as dataman
 
 TORCHCOMPTRAINDATA = "data/pairLearn/comptrain.pyt"
 TORCHCOMPDEVDATA = "data/pairLearn/compdev.pyt"
@@ -326,66 +327,6 @@ def strGetDict(mydict):
 def intGetDict(mydict):
     return lambda x: mydict.get(x, 0)
 
-class PairDataManager(object):
-    # TODO rely on this class for data reading / investigating. Remove
-    # hard-coded assumptions on layout of data
-    def __init__(self, directory, featDir):
-        self._directory = directory
-        self._andecoder = os.path
-        trainLoc = os.path.join(self._directory, "pairtrain.pyt")
-        self._role2intFile = "%s_role2Int" % trainLoc
-        self._noun2intFile = "%s_noun2Int" % trainLoc
-        self._verb2intFile = "%s_verb2Int" % trainLoc
-        self._featDir = featDir
-
-        self.role2int = torch.load(self._role2intFile)
-        self.noun2int = torch.load(self._noun2intFile)
-        self.verb2int = torch.load(self._verb2intFile)
-
-        self.int2role = mt.reverseMap(self.role2int)
-        self.int2noun = mt.reverseMap(self.noun2int)
-        self.int2verb = mt.reverseMap(self.verb2int)
-        """
-def getIm2Feats(featureDirectory, imNames):
-  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in imNames } # Should have all names in it.
-  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
-  return imToFeatures
-
-        """
-        imnames = os.listdir(self._featDir)
-        self.name2feat = getIm2Feats(self._featDir, imnames)
-        self._feat2name = { tuple(v): k for k,v in self.name2feat.iteritems()}
-
-    def getImnameFromFeats(self, feats):
-        return self._feat2name[tuple(np.array(feats.view(pc.IMFEATS).numpy(), dtype=np.float64))]   
-
-    def partdecodeToFulldecode(self, partlyDecodedAn):
-        ret = copy.copy(partlyDecodedAn)
-        for i, samp in enumerate(partlyDecodedAn):
-            if i % 2 == 1:
-                ret[i] = du.decodeNoun(samp)
-        return ret
-    def decodeCond(self, cond):
-        assert(cond.size(1) == 1039), "Invalid cond!"
-        return cond[:,:12], cond[:,12], cond[:,13], cond[:,14], cond[:,15:]
-    def decodeFeatsAndScore(self, fas):
-        assert(fas.size(1) == 1025), "Invalid feats-and-score!"
-        return fas[:,:1024], fas[:,1024]
-        
-
-    # TODO what to do about values that are too big?
-    def annotationsintsToCodes(self, annotations):
-        assert(annotations.size() == torch.Size((1, 12))), "Invalid annotations"
-        anList = list(annotations.view(12))
-
-        ret = []
-        for i, elem in enumerate(anList):
-            if i % 2 == 0:
-                ret.append(self.int2role.get(elem, ""))
-            else:
-                ret.append(self.int2noun.get(elem, ""))
-        return ret
-
 def makeDataHtml(outDir, featDir):
     """
     Create an HTML file inside outDir that shows useful things about the dataset
@@ -404,7 +345,7 @@ def makeDataHtml(outDir, featDir):
 
     dataset = torch.load(os.path.join(outDir, "pairtrain.pyt"))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
-    pdm = PairDataManager(outDir, featDir)
+    pdm = dataman.PairDataManager(outDir, featDir)
     for i, data in tqdm.tqdm(
             enumerate(it.islice(dataloader, 20), 0),
             total=min(len(dataloader), 20), desc="gathering samples"):
@@ -469,11 +410,6 @@ def makeData(trainLoc, devLoc, featDir, vrndatafile, mode="max"):
   torch.save(dataSet, devLoc)
 
 
-def getIm2Feats(featureDirectory, imNames):
-  imToFeatures = {name: np.fromfile("%s%s" % (featureDirectory, name), dtype=np.float32) for name in imNames } # Should have all names in it.
-  imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
-  return imToFeatures
-
 
 # TODO refactor this a bit. Also, make some stability tests!
 def makeDataSet(
@@ -533,7 +469,7 @@ def makeDataSet(
   logging.getLogger(__name__).info("role2int size: %d" % len(role2Int))
   logging.getLogger(__name__).info("noun2Int size: %d" % len(noun2Int))
 
-  imToFeatures = getIm2Feats(featureDirectory, im1Names)
+  imToFeatures = dataman.getIm2Feats(featureDirectory, im1Names)
 
   # Loop through, building train and dev sets.
   xData = []

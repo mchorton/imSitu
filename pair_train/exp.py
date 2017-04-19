@@ -13,9 +13,9 @@ import itertools as it
 # This should probably be multiple objects?
 # TODO why am I not using zsDev.json anywhere?
 class DirConfig(object):
-    def __init__(self, basedir="."):
+    def __init__(self, basedir=".", cautious=True):
         self.basedir = basedir
-        if os.path.exists(self.basedir):
+        if cautious and os.path.exists(self.basedir):
             raise ValueError(
                     "Base directory '%s' already exists. Cowardly exiting "
                     "to avoid overwriting experiment" % self.basedir)
@@ -73,8 +73,9 @@ class PhpGenerator(object):
         htmlMaker.addElement(html.Heading(1, "Experiment Dashboard"))
         for dirpath, dirnames, filenames in os.walk(self._rootDir):
             for filename in it.ifilter(lambda x: x.endswith(".php"), filenames):
-                link = os.path.relpath(os.path.join(dirpath, filename),
-                                       self._rootDir)
+                link = "/%s" % os.path.join(
+                        self._rootDir, os.path.relpath(
+                                os.path.join(dirpath, filename), self._rootDir))
                 htmlMaker.addElement(
                         html.HRef(link, link))
                 htmlMaker.addElement(html.Paragraph("\n"))
@@ -99,7 +100,9 @@ class MultiganParameters(object):
         self.args = [
                 self._config.multigandir,
                 self._config.pairDataTrain,
-                self._config.multiganlogdir]
+                self._config.multiganlogdir,
+                self._config.pairdir,
+                self._config.featdir]
         self.kwargs = {
                 "epochs": 200,
                 "logPer": 3,
@@ -149,8 +152,22 @@ def runTestExp():
 def runDefaultExp():
     dirconfig = DirConfig("data/manygan_default/")
     runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
     runner.generateData(DataGenerator(dirconfig))
 
     mp = MultiganParameters(dirconfig)
+    runner.generateGanModels(MultiganTrainer(mp))
+
+def runLowlearn():
+    dirconfig = DirConfig("data/manygan_lowlearn/", cautious=False)
+
+    runner = MultiganExperimentRunner()
+    """
+    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+    runner.generateData(DataGenerator(dirconfig))
+    """
+
+    mp = MultiganParameters(dirconfig)
+    mp.kwargs["lr"] = 1e-5
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))

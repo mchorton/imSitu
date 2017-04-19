@@ -2,7 +2,8 @@
 # TODO is dropout on in the right places?
 # Training the image transformation logic using a neural network.
 import json
-import scipy.stats as ss
+#import scipy.stats as ss # TODO temp hack.
+import pizza as ss
 import torch.nn as nn
 import numpy as np
 import torch
@@ -25,9 +26,9 @@ import multiprocessing
 import tblib.pickling_support
 import itertools as it
 import pair_train.dashboard as dash
-import re
 import subprocess
 import utils.methods as mt
+import data as dataman
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -317,101 +318,11 @@ class GanTrainer(object):
     return trainCGANNoFile(
         datasetFileName, **kwargs)
 
-def saveShard(outFileName, datalist):
-  """
-  Create a Tensor Dataset from the list of pairs in datalist, then save to 
-  outFileName
-  """
-  xdata, ydata = zip(*datalist)
-  xdata = torch.cat(xdata, 0)
-  ydata = torch.cat(ydata, 0)
-  assert(xdata.size(0) == ydata.size(0)), "Batch size mismatch"
-  assert(xdata.size(1) == 12 + 3 + 1024), "Invalid x.size(1)=%d" % xdata.size(1)
-  assert(ydata.size(1) == 1024 + 1), "Invalid y.size(1)=%d" % ydata.size(1)
-  torch.save(
-      td.TensorDataset(xdata, ydata), outFileName)
-
-class ShardedDataHandler(object):
-  # Class for reading the folder output of shardAndSave
-  def __init__(self, directory, suffix = ".data"):
-    self.directory = directory
-    self._suffix = suffix
-    if not os.path.exists(self.directory):
-      os.makedirs(self.directory)
-  def keyToName(self, key):
-    return "_".join(map(lambda x: str(int(x)), key)) + self._suffix
-  def save(self, datashards):
-    """
-    Save a bunch of datasets to disk.
-    datashards - map from (n1, n2) integer IDs -> [data, data, data, ...]
-    here, 'data' is a x,y pair (batch size one, e.g. x.size() == (1, 12+3+1024))
-    """
-    for k,datalist in tqdm.tqdm(
-        datashards.iteritems(), total=len(datashards), desc="Saving datasets"):
-      outname = os.path.join(self.directory, self.keyToName(k))
-      saveShard(outname, datalist)
-  def nameToNouns(self, filename):
-    relevant = os.path.basename(filename)
-    fileReg = re.compile("(\d+)(?:.0)?_(\d+)(?:.0)?" + self._suffix)
-    match = fileReg.match(relevant)
-    if not match:
-      raise ValueError("Invalid filename '%s' doesn't match regex")
-    return map(lambda x: int(float(x)), match.group(1, 2))
-  def iterNounPairs(self):
-    for filename in os.listdir(self.directory):
-      yield self.nameToNouns(filename)
-  def keyToPath(self, key):
-    return os.path.join(self.directory, self.keyToName(key))
-
-def histString(histogram):
-    """
-    Represent a np.histogram in a nice / readable way.
-    """
-    hist, binEdges = histogram
-    del histogram
-    ret = "[" + "<%s>" % str(binEdges[0])
-    binEdges = binEdges[1:]
-    for val, edge in it.izip(hist, binEdges):
-        ret += " %s <%s>" % (val, edge)
-    return ret + ")"
-
-def shardAndSave(datasetFileName, outDirName, **kwargs):
-  """
-  Break up data in datasetFileName based on noun pairs. Save the chunks of data
-  to folder outDirName.
-  """
-  minDataPts = kwargs.get("minDataPts", 0)
-  # TODO assert that this dataset is in the right form?
-  nounpairToData = collections.defaultdict(list)
-  dataSet = torch.load(datasetFileName)
-  dataloader = td.DataLoader(dataSet, batch_size=1, shuffle=False, num_workers=0)
-  for i, data in tqdm.tqdm(
-      enumerate(dataloader, 0), total=len(dataloader),
-      desc="Sharding data...", leave=False):
-    conditionals, testImageAndScore = data
-    key = (conditionals[(0, 13)], conditionals[(0, 14)]) # Get n1, n2
-    nounpairToData[key].append((data[0].clone(), data[1].clone()))
-  logging.getLogger(__name__).info(
-      "Got %d unique noun pairs" % len(nounpairToData))
-  bins = [0, 1, 2, 3, 4, 5, 10, 15, 20, 30, 50, 100, 200, 500, 1000, 10000, sys.maxint]
-  distribution = np.histogram(
-      [len(v) for v in nounpairToData.itervalues()], bins=bins)
-  logging.getLogger(__name__).info(
-      "Distribution of dataset sizes: %s" % histString(distribution))
-  logging.getLogger(__name__).info(
-      "Requiring at least %d datapoints" % minDataPts)
-  nounpairToData = {
-      pair: data for pair, data in nounpairToData.iteritems() if len(data) > minDataPts}
-  logging.getLogger(__name__).info(
-      "Filtered down to %d unique noun pairs" % len(nounpairToData))
-  saver = ShardedDataHandler(outDirName)
-  saver.save(nounpairToData)
-
 def trainOneGanArgstyle(args):
   trainOneGan(*args)
 def trainOneGan(
     ganFileName, datasetFileName, logFileName, gpuId, ganTrainer, 
-    parzenDirectory, ablationDirectory, useScore):
+    parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir):
   ganTrainer.train(
       datasetFileName, ganFileName, useScore=useScore, logFileName=logFileName,
       gpu_id=gpuId)
@@ -420,7 +331,7 @@ def trainOneGan(
   parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
   parResults = ""
   try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, gpu_id=gpuId)
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpuId)
     parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
@@ -433,7 +344,7 @@ def trainOneGan(
   with open(ablationName, "w") as lossFile:
     lossFile.write("Loss=%s" % str(myLoss))
 
-def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, **kwargs):
+def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
   # TODO nice to do something fancier. For now, just shard jobs between these 
   # GPUs
   ganTrainer = GanTrainer(**kwargs)
@@ -457,7 +368,9 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             ganTrainer,
             parzenDirectory,
             ablationDirectory,
-            kwargs["useScore"]))
+            kwargs["useScore"],
+            pairtraindir,
+            featdir))
   pools = {}
   for gpu in activeGpus:
     pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
@@ -541,12 +454,12 @@ def exp3():
       style="trgan")
 
 def genDataAndTrainIndividualGans(
-    outDirName, datasetFileName, logFileDir, **kwargs):
+    outDirName, datasetFileName, logFileDir, pairtraindir, featdir, **kwargs):
   mt.makeDirIfNeeded(logFileDir)
   with open(os.path.join(logFileDir, "args.txt"), "w+") as argfile:
     argfile.write("ARGS=%s\nKWARGS=%s" % (str((outDirName, datasetFileName, logFileDir)), str(kwargs)))
   datasetDir = os.path.join(outDirName, "nounpair_data/")
-  shardAndSave(datasetFileName, datasetDir, **kwargs)
+  dataman.shardAndSave(datasetFileName, datasetDir, **kwargs)
 
   parzenDir = os.path.join(outDirName, "parzen_fits/")
   ablationDir = os.path.join(outDirName, "ablations/")
@@ -564,8 +477,8 @@ def genDataAndTrainIndividualGans(
   graphmaker = subprocess.Popen(
       'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stderr=subprocess.STDOUT, shell=True)
   trainIndividualGans(
-      datasetDir, ganLoc, logFileDir, parzenDir, ablationDir,
-      mapBaseName=datasetFileName, **kwargs)
+      datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
+      featdir, mapBaseName=datasetFileName, **kwargs)
   # TODO output process logs elsewhere.
   graphmaker.terminate()
   graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stderr=subprocess.STDOUT, shell=True)
@@ -838,12 +751,13 @@ def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
     out = [out]
   return out[0][:nTestPoints]
 
-def parzenWindowFromFile(ganModelFile, ganDevSet, **kwargs):
+def parzenWindowFromFile(ganModelFile, ganDevSet, pairtraindir, featdir, **kwargs):
   gDiskDevLoader = GanDataLoader(ganDevSet)
   _, netG = torch.load(ganModelFile)
-  return parzenWindowProb(netG, gDiskDevLoader.data, **kwargs)
+  pdm = dataman.PairDataManager(pairtraindir, featdir)
+  return parzenWindowProb(netG, gDiskDevLoader.data, pdm, **kwargs)
 
-def parzenWindowProb(netG, devData, **kwargs):
+def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
   # TODO this is using ydata as the conditional! It shouldn't.
   # I need to fix many things about this function.
   # TODO with only 5k datapoints, this runs a 12G gpu out of memory. Seems
@@ -859,6 +773,7 @@ def parzenWindowProb(netG, devData, **kwargs):
   nSamples = kwargs.get("nSamples", 5000)
   nTestSamples = kwargs.get("nTestSamples", 100)
   style = kwargs.get("style", "trgan")
+  test = kwargs.get("test", False)
 
   netG = netG.cuda(gpu_id)
 
@@ -875,13 +790,8 @@ def parzenWindowProb(netG, devData, **kwargs):
     if i >= nTestSamples:
       break
     fullConditional, imageAndScore = data
-    image = imageAndScore[:,:pc.IMFEATS]
-    if style == "gan":
-      conditional = fullConditional[:,:12]
-    elif style == "trgan":
-      conditional = fullConditional
-    else:
-      raise ValueError("Invalid style '%s'" % style)
+    image, _ = pairDataManager.decodeFeatsAndScore(imageAndScore)
+    conditional = pairDataManager.getConditionalStyle(fullConditional, style)
     # kde_input is pc.IMFEATSx1
     kde_input = torch.transpose(image, 0, 1).numpy()
     key = tuple(*conditional.numpy().tolist())
@@ -899,19 +809,29 @@ def parzenWindowProb(netG, devData, **kwargs):
     assert(fullConditional.size() == torch.Size([1, pc.FCSIZE])), \
         "Invalid fullConditional.size()=%s" % str(fullConditional.size())
 
+    logging.getLogger(__name__).info("Investigating conditional %s" % pairDataManager.condToString(fullConditional))
+
     dataTensor = getGANChimeras(
         netG, nSamples, fullConditional, gpu_id=gpu_id,
         dropoutOn=True if netG.inputSize < 1 else False)
+    logging.getLogger(__name__).info("Chimeras shape: %s" % str(dataTensor.size()))
     assert(dataTensor.size() == torch.Size([nSamples, pc.IMFEATS])), \
         "Invalid dataTensor.size()=%s" % str(dataTensor.size())
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
+    """
+    for elem in kde_train_input.T:
+        logging.getLogger(__name__).info("elem=%s" % str(elem))
+    """
     gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
 
     devData = np.concatenate(kdein, axis=1)
     probs[relevantCond] = gpw.logpdf(devData)
+    logging.getLogger(__name__).info("%d, %d" % (i, logPer))
     if i % logPer == (logPer - 1):
       logging.getLogger(__name__).info("number of x points: %d" % len(kdein))
       logging.getLogger(__name__).info(
           "prob sample: %s" % repr(probs[relevantCond]))
+    if test:
+      return probs
 
   return probs
