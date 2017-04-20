@@ -317,6 +317,11 @@ class GanTrainer(object):
     return trainCGANNoFile(
         datasetFileName, **kwargs)
 
+def redirectOutputAndTrain(args): 
+  logFileName = args[2]
+  mt.setOutputToFiles(logFileName)
+  trainOneGanArgstyle(args)
+
 def trainOneGanArgstyle(args):
   trainOneGan(*args)
 def trainOneGan(
@@ -349,13 +354,13 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
   seqOverride = kwargs.get("seqOverride", False)
-  activeGpus = [0, 1, 2, 3]
+  activeGpus = kwargs.get("activeGpus", [0, 1, 2, 3])
   nGpus = len(activeGpus)
-  gpuToTasks = {gpu: [] for gpu in activeGpus}
+  taskList = []
   for i, filename in enumerate(os.listdir(datasetDirectory)):
     filenameNoExt = os.path.splitext(filename)[0]
     gpuId = i % nGpus
-    gpuToTasks[gpuId].append(
+    taskList.append(
         (
             os.path.join(
                 ganDirectory, 
@@ -371,6 +376,22 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             pairtraindir,
             featdir,
             kwargs))
+
+  # Idea: interleave the jobs like [gpu1job, gpu2job, gpu3job, gpu1job, gpu2...]
+  # Then, don't have to have multiple pools / confusing async code.
+  # TODO
+
+  if not seqOverride:
+    logging.getLogger(__name__).info("Beginning multiprocessing")
+    pool = multiprocessing.Pool(processes=procsPerGpu*len(activeGpus), maxtasksperchild=1)
+    tqdm.tqdm(
+        pool.imap(redirectOutputAndTrain, taskList), total=len(taskList),
+        desc="Running processes on GPUs")
+  else:
+    for task in taskList:
+      trainOneGanArgstyle(task)
+  """
+
   pools = {}
   for gpu in activeGpus:
     pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
@@ -393,6 +414,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
     for gpu, pool in pools.iteritems():
       for args in gpuToTasks[gpu]:
         trainOneGanArgstyle(args)
+  """
 
 def genDataAndTrainIndividualGansStubTest():
   genDataAndTrainIndividualGans(
@@ -513,6 +535,7 @@ def trainCGANNoFile(
   dUpdates = kwargs.get("dUpdates", 1)
   gUpdates = kwargs.get("gUpdates", 1)
   style = kwargs.get("style", "trgan")
+  disablecgantrainprog = kwargs.get("disablecgantrainprog", True)
   # Whether to ignore the conditioning variable. Useful for baselines.
   ignoreCond = kwargs.get("ignoreCond", False) 
   logFileName = kwargs.get("logFileName", None)
@@ -547,10 +570,12 @@ def trainCGANNoFile(
 
   with open(logFileName, "w") as logFile:
     for epoch in tqdm.tqdm(
-        range(epochs), total=epochs, desc="Epochs completed: "):
+        range(epochs), total=epochs, desc="Epochs completed: ",
+        disable=disablecgantrainprog):
       for i, data in tqdm.tqdm(
           enumerate(dataloader, 0), total=len(dataloader),
-          desc="Iterations completed: ", leave=False):
+          desc="Iterations completed: ", leave=False,
+          disable=disablecgantrainprog):
         networkUpdateStep(
             netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id,
             ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion,
@@ -651,7 +676,7 @@ def networkUpdateStep(
     if logFile:
       logFile.write(logString + '\n')
 
-    tqdm.tqdm.write(logString)
+    #tqdm.tqdm.write(logString)
     logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, epochs, i, nSamples,
                  errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
@@ -663,14 +688,16 @@ def evaluateGANModelAndAblation(ganModelFile, datasetFileName, ganTrainer, **kwa
   kwargs["ganSaveBasename"] = None
   nets = ganTrainer.trainNoFile(datasetFileName, ignoreCond=True, **kwargs)
   logging.getLogger(__name__).info("Evaluating ablation model")
-  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs.get("useScore"), gpu_id=kwargs.get("gpu_id", 0))
+  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs.get("useScore"), gpu_id=kwargs.get("gpu_id", 0), disableevganprog=kwargs.get("disableevganprog", True))
   return {"True Loss": trueLoss, "Ablated Loss:": ablatedLoss}
 
 def evaluateGANModel(ganModelFile, datasetFileName, useScore, gpu_id=2):
   nets = torch.load(ganModelFile)
   return evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=gpu_id)
 
-def evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=2):
+def evaluateGANModelNoFile(
+    nets, datasetFileName, useScore, gpu_id=2,
+    disableevganprog=True):
   batchSize=16
   """
   Evaluate a GAN model generator's image creation ability in a simple way.
@@ -691,7 +718,7 @@ def evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=2):
   datasetSize = 0.
   for i, data in tqdm.tqdm(
         enumerate(dataloader, 0), total=len(dataloader),
-        desc="Iterations completed: "):
+        desc="Iterations completed: ", disable=disableevganprog):
     expectedDataSize = 12 + 3 + pc.IMFEATS
     assert(len(data[0][0]) == expectedDataSize), \
         "expected len(data[0][0])=%d to be %d" % \

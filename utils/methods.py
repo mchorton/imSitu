@@ -2,6 +2,7 @@ import os
 import utils.mylogger as logging
 import json
 import itertools as it
+import sys
 def makeDirIfNeeded(filename):
   """
   Create the given directory, or the directory in which the file would be
@@ -36,3 +37,14 @@ def histString(histogram):
         ret += " %s <%s>" % (val, edge)
     return ret + ")"
 
+def setOutputToFiles(basename):
+    stdoutfile = "%s.stdout" % basename
+    stderrfile = "%s.stderr" % basename
+
+    #logging.getLogger(__name__).info("Redirecting to files with base %s" % basename)
+
+    sys.stdout = open(stdoutfile, 'w')
+    sys.stderr = open(stderrfile, 'w')
+
+    # Change the root logger to use the new stdout
+    logging.reconfigure()
