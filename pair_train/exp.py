@@ -9,6 +9,7 @@ import split.rp_experiments as rpe
 import utils.mylogger as logging
 import split.v2pos.htmlgen as html
 import itertools as it
+import data as dataman
 
 # This should probably be multiple objects?
 # TODO why am I not using zsDev.json anywhere?
@@ -41,9 +42,10 @@ class DirConfig(object):
         return os.path.join(self.basedir, directory)
 
 class DataGenerator(object):
-    def __init__(self, dirConfig, test=False):
+    def __init__(self, dirConfig, test=False, mode="max"):
         self._config = dirConfig
         self._test = test
+        self._mode = mode
     def generate(self):
         spsp.copyDataSplit(
                 self._config.localsplitdir, self._config.splitdir,
@@ -62,7 +64,7 @@ class DataGenerator(object):
                 self._config.pairDataDev,
                 self._config.featdir,
                 self._config.vrnDataName,
-                mode="max")
+                mode=self._mode)
 
 class PhpGenerator(object):
     def __init__(self, rootDir):
@@ -128,10 +130,11 @@ class MultiganTrainer(object):
                 **self._parameters.kwargs)
 
 def runTestExp():
-    if os.path.exists("data/test_exp/"):
+    expdir = "data/test_exp"
+    if os.path.exists(expdir):
         import shutil
-        shutil.rmtree("data/test_exp/")
-    dirconfig = DirConfig("data/test_exp/")
+        shutil.rmtree(expdir)
+    dirconfig = DirConfig(expdir)
     runner = MultiganExperimentRunner()
     runner.generateData(DataGenerator(dirconfig, test=True))
 
@@ -148,7 +151,36 @@ def runTestExp():
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
 
-# TODO why do "mode='all'" and "mode='max'" produce diff numbers of pairs?
+def runPartialTestExp(expdir="data/test_exp/", mode="all"):
+    expdir = os.path.join(expdir, mode)
+    dirconfig = DirConfig(expdir, False)
+    """
+    if os.path.exists("data/test_exp/"):
+        import shutil
+        shutil.rmtree("data/test_exp/")
+    """
+    runner = MultiganExperimentRunner()
+    runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
+
+    datasetDir = os.path.join(dirconfig.multigandir, "nounpair_data/")
+    pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
+    dataman.shardAndSave(pdm, datasetDir, minDataPts=0)
+    """
+
+    mp = MultiganParameters(dirconfig)
+    mp.kwargs["epochs"] = 2
+    mp.kwargs["logPer"] = 1
+    mp.kwargs["depth"] = 2
+    mp.kwargs["genDepth"] = 2
+    mp.kwargs["minDataPts"] = 3
+    mp.kwargs["procsPerGpu"] = 5
+    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["seqOverride"] = False
+
+    runner.generateGanModels(MultiganTrainer(mp))
+    """
+    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+
 def runDefaultExp():
     dirconfig = DirConfig("data/manygan_default/")
     runner = MultiganExperimentRunner()

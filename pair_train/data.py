@@ -47,21 +47,28 @@ class ShardedDataHandler(object):
   def keyToPath(self, key):
     return os.path.join(self.directory, self.keyToName(key))
 
-def shardAndSave(datasetFileName, outDirName, **kwargs):
+def shardAndSave(pdm, outDirName, **kwargs):
   """
   Break up data in datasetFileName based on noun pairs. Save the chunks of data
   to folder outDirName.
   """
+  datasetFileName = pdm.trainLoc # TODO we should also do dev data eventually.
+
+  logging.getLogger(__name__).info("Sharding data in %s" % datasetFileName)
+
   minDataPts = kwargs.get("minDataPts", 0)
-  # TODO assert that this dataset is in the right form?
   nounpairToData = collections.defaultdict(list)
   dataSet = torch.load(datasetFileName)
   dataloader = td.DataLoader(dataSet, batch_size=1, shuffle=False, num_workers=0)
+  logging.getLogger(__name__).info("Found %d datapoints" % len(dataloader))
   for i, data in tqdm.tqdm(
       enumerate(dataloader, 0), total=len(dataloader),
       desc="Sharding data...", leave=False):
     conditionals, testImageAndScore = data
-    key = (conditionals[(0, 13)], conditionals[(0, 14)]) # Get n1, n2
+
+    _, _, n1, n2, _ = pdm.decodeCond(conditionals)
+
+    key = (n1[0,], n2[0,]) # Get n1, n2
     nounpairToData[key].append((data[0].clone(), data[1].clone()))
   logging.getLogger(__name__).info(
       "Got %d unique noun pairs" % len(nounpairToData))
@@ -99,10 +106,10 @@ class PairDataManager(object):
     def __init__(self, directory, featDir):
         self._directory = directory
         self._andecoder = os.path
-        trainLoc = os.path.join(self._directory, "pairtrain.pyt")
-        self._role2intFile = "%s_role2Int" % trainLoc
-        self._noun2intFile = "%s_noun2Int" % trainLoc
-        self._verb2intFile = "%s_verb2Int" % trainLoc
+        self.trainLoc = os.path.join(self._directory, "pairtrain.pyt")
+        self._role2intFile = "%s_role2Int" % self.trainLoc
+        self._noun2intFile = "%s_noun2Int" % self.trainLoc
+        self._verb2intFile = "%s_verb2Int" % self.trainLoc
         self._featDir = featDir
 
         self.role2int = torch.load(self._role2intFile)
@@ -119,6 +126,9 @@ class PairDataManager(object):
 
     def getImnameFromFeats(self, feats):
         return self._feat2name[tuple(np.array(feats.view(pc.IMFEATS).numpy(), dtype=np.float64))]   
+
+    def noun2String(self, noun):
+        return du.decodeNoun(self.int2noun[noun])
 
     def partdecodeToFulldecode(self, partlyDecodedAn):
         ret = copy.copy(partlyDecodedAn)

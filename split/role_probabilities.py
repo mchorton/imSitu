@@ -394,6 +394,8 @@ def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blackli
       "Cutoff thresh %f: there are %d valid pairs" % (thresh, len(toShow2)))
   logging.getLogger(__name__).info("Expanding (n1, n2) => (n1, n2), (n2, n1)")
   nextShow = []
+
+
   # Generate reverse pairs.
   for elem in tqdm.tqdm(
       toShow2, total=len(toShow2), desc="Generating reverse pairs"):
@@ -404,6 +406,14 @@ def getSimilaritiesList(dirName, datasetLoc, thresh=2., freqthresh = 10, blackli
     newelem[3] = elem[4]
     newelem[4] = elem[3]
     nextShow.append(newelem)
+
   toShow2 = nextShow
 
-  return toShow2 # Probably should return an object...
+  keyset = set()
+  for elem in toShow2:
+    keyset.add(tuple(elem[0:2]))
+  logging.getLogger(__name__).info(
+      "After replication, there are %d unique noun pairs, and %d datapoints." \
+      % (len(keyset), len(toShow2)))
+
+  return toShow2 # TODO Probably should return an object...

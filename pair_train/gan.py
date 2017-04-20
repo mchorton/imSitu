@@ -2,8 +2,7 @@
 # TODO is dropout on in the right places?
 # Training the image transformation logic using a neural network.
 import json
-#import scipy.stats as ss # TODO temp hack.
-import pizza as ss
+import hack.stats.kde as kde
 import torch.nn as nn
 import numpy as np
 import torch
@@ -459,7 +458,8 @@ def genDataAndTrainIndividualGans(
   with open(os.path.join(logFileDir, "args.txt"), "w+") as argfile:
     argfile.write("ARGS=%s\nKWARGS=%s" % (str((outDirName, datasetFileName, logFileDir)), str(kwargs)))
   datasetDir = os.path.join(outDirName, "nounpair_data/")
-  dataman.shardAndSave(datasetFileName, datasetDir, **kwargs)
+  pdm = dataman.PairDataManager(pairtraindir, featdir)
+  dataman.shardAndSave(pdm, datasetDir, **kwargs)
 
   parzenDir = os.path.join(outDirName, "parzen_fits/")
   ablationDir = os.path.join(outDirName, "ablations/")
@@ -809,25 +809,20 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
     assert(fullConditional.size() == torch.Size([1, pc.FCSIZE])), \
         "Invalid fullConditional.size()=%s" % str(fullConditional.size())
 
-    logging.getLogger(__name__).info("Investigating conditional %s" % pairDataManager.condToString(fullConditional))
 
     dataTensor = getGANChimeras(
         netG, nSamples, fullConditional, gpu_id=gpu_id,
         dropoutOn=True if netG.inputSize < 1 else False)
-    logging.getLogger(__name__).info("Chimeras shape: %s" % str(dataTensor.size()))
     assert(dataTensor.size() == torch.Size([nSamples, pc.IMFEATS])), \
         "Invalid dataTensor.size()=%s" % str(dataTensor.size())
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
-    """
-    for elem in kde_train_input.T:
-        logging.getLogger(__name__).info("elem=%s" % str(elem))
-    """
-    gpw = ss.gaussian_kde(kde_train_input, bw_method=bw_method)
+    gpw = kde.gaussian_kde(kde_train_input, bw_method=bw_method)
 
     devData = np.concatenate(kdein, axis=1)
     probs[relevantCond] = gpw.logpdf(devData)
     logging.getLogger(__name__).info("%d, %d" % (i, logPer))
     if i % logPer == (logPer - 1):
+      logging.getLogger(__name__).info("Investigating conditional %s" % pairDataManager.condToString(fullConditional))
       logging.getLogger(__name__).info("number of x points: %d" % len(kdein))
       logging.getLogger(__name__).info(
           "prob sample: %s" % repr(probs[relevantCond]))

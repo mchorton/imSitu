@@ -435,6 +435,18 @@ def makeDataSet(
   full_an1 = [pt[6] for pt in vrnData]
   full_an2 = [pt[7] for pt in vrnData]
 
+  def getUniqueVrnNounpairs(vrnData):
+    # Useful for debugging.
+    n1s = [pt[4] for pt in vrnData]
+    n2s = [pt[5] for pt in vrnData]
+    nUP = len(frozenset(zip(n1s, n2s)))
+    logging.getLogger(__name__).info("There are %d unique noun pairs" % nUP)
+    logging.getLogger(__name__).info(
+        "There are %d points in vrnData" % len(vrnData))
+
+  logging.getLogger(__name__).info("Beginning makeDataSet:")
+  getUniqueVrnNounpairs(vrnData)
+
   logging.getLogger(__name__).info("Done reading data")
   
   verb_len = {}
@@ -480,10 +492,21 @@ def makeDataSet(
     for i in range(0, len(v1)) : rv += (v1[i]-v2[i])*(v1[i]-v2[i])
     return math.sqrt(rv)
 
+  # TODO we should enforce that the above only happens once, to ensure that the
+  # mapping from roles to ints is the same for training / dev sets. For now,
+  # because we only filter vrnData at this stage, things will be consistent.
+
+  # Now, cut down vrnData to only the whitelisted elements.
+  logging.getLogger(__name__).info("Before filter: vrnData has %d elems" % len(vrnData))
+  getUniqueVrnNounpairs(vrnData)
+  vrnData = filter(lambda x: x[1] in whitelistedImgNames, vrnData)
+  logging.getLogger(__name__).info("After filter: vrnData has %d elems" % len(vrnData))
+  getUniqueVrnNounpairs(vrnData)
+
   if mode != "all":
     img_semchange = {}
     for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(enumerate(vrnData), total=len(vrnData)):
-      key = (im2Name, str(tRole), noun2)
+      key = (im1Name, im2Name, str(tRole), noun2)
       if key not in img_semchange: img_semchange[key] = []
       img_semchange[key].append( (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) )
       
@@ -501,8 +524,11 @@ def makeDataSet(
             mv = d
             best = _item
         vrnData.append(best)
+  getUniqueVrnNounpairs(vrnData)
+
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(
         enumerate(vrnData), total=len(vrnData)):
+    assert(im1Name in whitelistedImgNames)
     anitems = [] 
     for (k,v) in an1.items():
       rid = role2Int[make_tuple(k)]
@@ -520,9 +546,8 @@ def makeDataSet(
         + list(imToFeatures[im1Name]) 
     y = list(imToFeatures[im2Name]) + [score]
 
-    if im1Name in whitelistedImgNames:
-      xData.append(x)
-      yData.append(y)
+    xData.append(x)
+    yData.append(y)
 
   dataSet = td.TensorDataset(torch.Tensor(xData), torch.Tensor(yData))
   return dataSet
