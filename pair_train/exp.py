@@ -67,22 +67,35 @@ class DataGenerator(object):
                 mode=self._mode)
 
 class PhpGenerator(object):
-    def __init__(self, rootDir):
-        self._rootDir = rootDir
+    def __init__(self, dirconfig):
+        self._dirconfig = dirconfig
     def generate(self):
         htmlMaker = html.HtmlMaker()
         htmlMaker.addTitle("Experiment Dashboard")
         htmlMaker.addElement(html.Heading(1, "Experiment Dashboard"))
-        for dirpath, dirnames, filenames in os.walk(self._rootDir):
-            for filename in it.ifilter(lambda x: x.endswith(".php"), filenames):
-                link = "/%s" % os.path.join(
-                        self._rootDir, os.path.relpath(
-                                os.path.join(dirpath, filename), self._rootDir))
-                htmlMaker.addElement(
-                        html.HRef(link, link))
-                htmlMaker.addElement(html.Paragraph("\n"))
-        htmlMaker.save(os.path.join(self._rootDir, "index.php"))
 
+        for indexfile in self.getIndexFiles2():
+            link = "/%s" % indexfile
+            htmlMaker.addElement(
+                    html.HRef(link, link))
+            htmlMaker.addElement(html.Paragraph("\n"))
+        htmlMaker.save(os.path.join(self._dirconfig.basedir, "index.php"))
+    def getIndexFiles(self):
+        # This is how I wanted to do things, but the files aren't ready yet
+        # So, I'm using a different version of this func.
+        ret = []
+        for dirpath, dirnames, filenames in os.walk(self._dirconfig.basedir):
+            for filename in it.ifilter(lambda x: x.endswith(".php"), filenames):
+                ret.append(os.path.join(
+                        self._dirconfig.basedir, os.path.relpath(
+                                os.path.join(dirpath, filename),
+                                self._dirconfig.basedir)))
+        return ret
+    def getIndexFiles2(self):
+        return [
+                self._dirconfig.pairdir,
+                self._dirconfig.vrndir,
+                self._dirconfig.multiganlogdir]
 
 class MultiganExperimentRunner(object):
     def __init__(self):
@@ -130,12 +143,14 @@ class MultiganTrainer(object):
                 **self._parameters.kwargs)
 
 def runTestExp():
-    expdir = "data/test_exp"
+    expdir = "data/test_exp/"
     if os.path.exists(expdir):
         import shutil
         shutil.rmtree(expdir)
     dirconfig = DirConfig(expdir)
+
     runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     runner.generateData(DataGenerator(dirconfig, test=True))
 
     mp = MultiganParameters(dirconfig)
@@ -149,23 +164,22 @@ def runTestExp():
     mp.kwargs["seqOverride"] = False
 
     runner.generateGanModels(MultiganTrainer(mp))
-    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
 
 def runPartialTestExp(expdir="data/test_exp/", mode="all"):
     expdir = os.path.join(expdir, mode)
     dirconfig = DirConfig(expdir, False)
+    runner = MultiganExperimentRunner()
     """
     if os.path.exists("data/test_exp/"):
         import shutil
         shutil.rmtree("data/test_exp/")
     """
     runner = MultiganExperimentRunner()
-    runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
+    #runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
 
-    datasetDir = os.path.join(dirconfig.multigandir, "nounpair_data/")
-    pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
-    dataman.shardAndSave(pdm, datasetDir, minDataPts=0)
-    """
+    #datasetDir = os.path.join(dirconfig.multigandir, "nounpair_data/")
+    #pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
+    #dataman.shardAndSave(pdm, datasetDir, minDataPts=0)
 
     mp = MultiganParameters(dirconfig)
     mp.kwargs["epochs"] = 2
@@ -179,27 +193,27 @@ def runPartialTestExp(expdir="data/test_exp/", mode="all"):
 
     runner.generateGanModels(MultiganTrainer(mp))
     """
-    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    """
 
 def runDefaultExp():
     dirconfig = DirConfig("data/manygan_default/")
     runner = MultiganExperimentRunner()
-    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     runner.generateData(DataGenerator(dirconfig))
 
     mp = MultiganParameters(dirconfig)
     runner.generateGanModels(MultiganTrainer(mp))
 
 def runLowlearn():
-    dirconfig = DirConfig("data/manygan_lowlearn/", cautious=False)
+    dirconfig = DirConfig("data/manygan_lowlearn/", cautious=True)
 
     runner = MultiganExperimentRunner()
-    """
-    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     runner.generateData(DataGenerator(dirconfig))
-    """
 
     mp = MultiganParameters(dirconfig)
-    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["lr"] = 1e-4
+    mp.kwargs["bw_method"] = 2 ** 18
     runner.generateGanModels(MultiganTrainer(mp))
-    runner.generatePhpDirectory(PhpGenerator(dirconfig.basedir))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))

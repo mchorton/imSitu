@@ -24,6 +24,7 @@ def saveAllDistances(data, vrProbs, outdir, nProc=None, useCache=False):
 
   needUpdate = False
 
+  # TODO add multiprocessing here.
   for i, (verb,roles) in tqdm.tqdm(
       enumerate(v2r.iteritems()), total=len(v2r),
       desc="getting distance on per-verb basis"):

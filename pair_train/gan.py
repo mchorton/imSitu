@@ -321,7 +321,7 @@ def trainOneGanArgstyle(args):
   trainOneGan(*args)
 def trainOneGan(
     ganFileName, datasetFileName, logFileName, gpuId, ganTrainer, 
-    parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir):
+    parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir, kwargs):
   ganTrainer.train(
       datasetFileName, ganFileName, useScore=useScore, logFileName=logFileName,
       gpu_id=gpuId)
@@ -330,7 +330,7 @@ def trainOneGan(
   parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
   parResults = ""
   try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpuId)
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, **kwargs)
     parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
@@ -369,7 +369,8 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             ablationDirectory,
             kwargs["useScore"],
             pairtraindir,
-            featdir))
+            featdir,
+            kwargs))
   pools = {}
   for gpu in activeGpus:
     pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
