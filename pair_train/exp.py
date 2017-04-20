@@ -165,17 +165,18 @@ def runTestExp():
 
     runner.generateGanModels(MultiganTrainer(mp))
 
-def runPartialTestExp(expdir="data/test_exp/", mode="all"):
-    expdir = os.path.join(expdir, mode)
+def runPartialTestExp(expdir="data/test_exp/", mode="max"):
+    expdir = os.path.join(expdir, mode) + "/"
     dirconfig = DirConfig(expdir, False)
     runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     """
     if os.path.exists("data/test_exp/"):
         import shutil
         shutil.rmtree("data/test_exp/")
     """
     runner = MultiganExperimentRunner()
-    #runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
+    runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
 
     #datasetDir = os.path.join(dirconfig.multigandir, "nounpair_data/")
     #pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
@@ -186,14 +187,13 @@ def runPartialTestExp(expdir="data/test_exp/", mode="all"):
     mp.kwargs["logPer"] = 1
     mp.kwargs["depth"] = 2
     mp.kwargs["genDepth"] = 2
-    mp.kwargs["minDataPts"] = 3
+    mp.kwargs["minDataPts"] = 0
     mp.kwargs["procsPerGpu"] = 5
     mp.kwargs["lr"] = 1e-5
     mp.kwargs["seqOverride"] = False
 
     runner.generateGanModels(MultiganTrainer(mp))
     """
-    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     """
 
 def runDefaultExp():

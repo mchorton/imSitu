@@ -571,12 +571,12 @@ def runModel(
   train = torch.load(trainLoc)
   
   trainloader = td.DataLoader(
-      train, batch_size=batchSize, shuffle=True, num_workers=4)
+      train, batch_size=batchSize, shuffle=True, num_workers=0)
 
   print "Loading dev data from %s" % str(devLoc)
   dev = torch.load(devLoc)
   devloader = td.DataLoader(
-      dev, batch_size=batchSize, shuffle=True, num_workers=4)
+      dev, batch_size=batchSize, shuffle=True, num_workers=0)
 
   print "found %d train datapoints" % len(train)
   print "found %d dev datapoints" % len(dev)
@@ -688,7 +688,7 @@ def computeAllFeatures(model, dataSet):
 
   returns a torch.Tensor() containing the features of the input
   """
-  trainloader = td.DataLoader(dataSet, batch_size=128, shuffle=False, num_workers=4)
+  trainloader = td.DataLoader(dataSet, batch_size=128, shuffle=False, num_workers=0)
   ret = torch.Tensor()
   for i, data in enumerate(trainloader, 0):
     inputs, _ = data

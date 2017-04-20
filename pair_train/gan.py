@@ -320,6 +320,8 @@ class GanTrainer(object):
 def redirectOutputAndTrain(args): 
   logFileName = args[2]
   mt.setOutputToFiles(logFileName)
+  logging.getLogger(__name__).info("Training gan in process %d" % os.getpid())
+  logging.getLogger(__name__).info("Using gpu %d" % args[3])
   trainOneGanArgstyle(args)
 
 def trainOneGanArgstyle(args):
@@ -335,7 +337,7 @@ def trainOneGan(
   parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
   parResults = ""
   try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, **kwargs)
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpuId, **kwargs)
     parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
@@ -377,44 +379,18 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             featdir,
             kwargs))
 
-  # Idea: interleave the jobs like [gpu1job, gpu2job, gpu3job, gpu1job, gpu2...]
-  # Then, don't have to have multiple pools / confusing async code.
-  # TODO
-
   if not seqOverride:
-    logging.getLogger(__name__).info("Beginning multiprocessing")
-    pool = multiprocessing.Pool(processes=procsPerGpu*len(activeGpus), maxtasksperchild=1)
-    tqdm.tqdm(
+    pool = multiprocessing.Pool(processes=procsPerGpu*nGpus, maxtasksperchild=1)
+    logging.getLogger(__name__).info(
+        "Beginning multiprocessing. Check individual process logs.")
+    for _ in tqdm.tqdm(
         pool.imap(redirectOutputAndTrain, taskList), total=len(taskList),
-        desc="Running processes on GPUs")
+        desc="Processes completed"):
+      # I think this is the only way to get tqdm to work properly (empty loop)
+      pass
   else:
     for task in taskList:
       trainOneGanArgstyle(task)
-  """
-
-  pools = {}
-  for gpu in activeGpus:
-    pools[gpu] = multiprocessing.Pool(processes=procsPerGpu)
-  resultmap = {}
-
-  if not seqOverride:
-    for gpu, pool in pools.iteritems():
-      resultmap[gpu] = pool.map_async(trainOneGanArgstyle, gpuToTasks[gpu])
-      pool.close()
-
-    for gpu, pool in pools.iteritems():
-      pool.join()
-
-    for k,v in resultmap.iteritems():
-      finalResults = v.get()
-      for result in finalResults:
-        if isinstance(result, ExceptionWrapper):
-          result.re_raise()
-  else:
-    for gpu, pool in pools.iteritems():
-      for args in gpuToTasks[gpu]:
-        trainOneGanArgstyle(args)
-  """
 
 def genDataAndTrainIndividualGansStubTest():
   genDataAndTrainIndividualGans(
@@ -517,6 +493,7 @@ def trainCGANNoFile(
     ganSaveBasename = None, gpu_id=0, lr=1e-2, logPer=5,
     batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=1e-2, nz=0,
     hiddenSize=pc.IMFEATS, **kwargs):
+  logging.getLogger(__name__).info("Training gan on gpu %d" % gpu_id)
   # Set up variables.
   beta1=0.9999
   mapBaseName = kwargs.get("mapBaseName", datasetFileName)
@@ -683,12 +660,12 @@ def networkUpdateStep(
 
 def evaluateGANModelAndAblation(ganModelFile, datasetFileName, ganTrainer, **kwargs):
   logging.getLogger(__name__).info("Evaluating original model")
-  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, kwargs.get("gpu_id", 0))
+  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, kwargs["useScore"], gpu_id=kwargs["gpu_id"])
   logging.getLogger(__name__).info("Training ablation")
   kwargs["ganSaveBasename"] = None
   nets = ganTrainer.trainNoFile(datasetFileName, ignoreCond=True, **kwargs)
   logging.getLogger(__name__).info("Evaluating ablation model")
-  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs.get("useScore"), gpu_id=kwargs.get("gpu_id", 0), disableevganprog=kwargs.get("disableevganprog", True))
+  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs["useScore"], gpu_id=kwargs["gpu_id"], disableevganprog=kwargs.get("disableevganprog", True))
   return {"True Loss": trueLoss, "Ablated Loss:": ablatedLoss}
 
 def evaluateGANModel(ganModelFile, datasetFileName, useScore, gpu_id=2):
@@ -698,6 +675,7 @@ def evaluateGANModel(ganModelFile, datasetFileName, useScore, gpu_id=2):
 def evaluateGANModelNoFile(
     nets, datasetFileName, useScore, gpu_id=2,
     disableevganprog=True):
+  logging.getLogger(__name__).info("Evaluating gan model on gpu %d" % gpu_id)
   batchSize=16
   """
   Evaluate a GAN model generator's image creation ability in a simple way.
@@ -802,6 +780,9 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
   nTestSamples = kwargs.get("nTestSamples", 100)
   style = kwargs.get("style", "trgan")
   test = kwargs.get("test", False)
+  disableparzprog = kwargs.get("disableparzprog", True)
+
+  logging.getLogger(__name__).info("Running parzen fit on gpu %d" % gpu_id)
 
   netG = netG.cuda(gpu_id)
 
@@ -814,7 +795,7 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
   logging.getLogger(__name__).info("Testing dev data against parzen window fit")
   for i, data in tqdm.tqdm(
       enumerate(devDataLoader, 0), total=len(devDataLoader),
-      desc="Iterations completed: "):
+      desc="Iterations completed: ", disable=disableparzprog):
     if i >= nTestSamples:
       break
     fullConditional, imageAndScore = data
@@ -827,7 +808,7 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
 
   probs = {}
   for i, (relevantCond, kdeinAndFC) in tqdm.tqdm(
-      enumerate(ymap.iteritems()), total=len(ymap)):
+      enumerate(ymap.iteritems()), total=len(ymap), disable=disableparzprog):
     kdein, fullConditional = zip(*kdeinAndFC)
 
     # Convert conditional back into a tensor. By definition, each element should
