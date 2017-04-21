@@ -53,7 +53,7 @@ class AugmentedDataSet(object):
     inFileName = self.sanitize(inFileName)
     self._data = torch.load(inFileName)
 
-def generate_augmented_chimeras(modelFileName, pairFileName, sourceWhitelistName, featDir):
+def generate_augmented_chimeras(modelFileName, pairFileName, sourceWhitelistName, featDir, gpu_id):
   """
   modelFileName - name of the neural network model file.
   pairFileName - name of the file with vrn pairings.
@@ -71,7 +71,7 @@ def generate_augmented_chimeras(modelFileName, pairFileName, sourceWhitelistName
   print "length of whitelists: %d" % len(whitelists)
   dataSet = pairnn.makeDataSet("%s_model_" % modelFileName, featDir, vrnData, whitelists)
   print "Computing features"
-  features = pairnn.computeAllFeatures(model, dataSet)
+  features = pairnn.computeAllFeatures(model, dataSet, gpu_id)
 
   ret = AugmentedDataSet()
 

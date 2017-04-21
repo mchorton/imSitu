@@ -166,15 +166,12 @@ def runTestExp():
     runner.generateGanModels(MultiganTrainer(mp))
 
 def runPartialTestExp(expdir="data/test_exp/", mode="max"):
-    expdir = os.path.join(expdir, mode) + "/"
-    dirconfig = DirConfig(expdir, False)
-    runner = MultiganExperimentRunner()
-    runner.generatePhpDirectory(PhpGenerator(dirconfig))
-    """
     if os.path.exists("data/test_exp/"):
         import shutil
         shutil.rmtree("data/test_exp/")
-    """
+    dirconfig = DirConfig(expdir, False)
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
     runner = MultiganExperimentRunner()
     runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
 
@@ -183,14 +180,16 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     #dataman.shardAndSave(pdm, datasetDir, minDataPts=0)
 
     mp = MultiganParameters(dirconfig)
-    mp.kwargs["epochs"] = 2
+    mp.kwargs["epochs"] = 200
     mp.kwargs["logPer"] = 1
-    mp.kwargs["depth"] = 2
-    mp.kwargs["genDepth"] = 2
+    mp.kwargs["depth"] = 32
+    mp.kwargs["genDepth"] = 32
     mp.kwargs["minDataPts"] = 0
-    mp.kwargs["procsPerGpu"] = 5
-    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["procsPerGpu"] = 3
+    mp.kwargs["lr"] = 1e-4
     mp.kwargs["seqOverride"] = False
+    mp.kwargs["nSamples"] = 1000
+    mp.kwargs["activeGpus"] = [1, 2, 3]
 
     runner.generateGanModels(MultiganTrainer(mp))
     """

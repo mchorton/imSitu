@@ -604,11 +604,11 @@ def runModel(
     print "running nn"
     net = ImTransNet(
         indim - (3+12), depth, nHidden, outdim, nWords, WESize, nVRs,
-        vrESize).cuda()
+        vrESize).cuda(gpu_id)
   elif modelType == "dot":
-    net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda()
+    net = MatrixDot(nWords, nVRs, int((vrESize + WESize) / 2)).cuda(gpu_id)
   elif modelType == "cross":
-    net = MatrixCross(nWords, WESize, nVRs, vrESize, 1024).cuda()
+    net = MatrixCross(nWords, WESize, nVRs, vrESize, 1024).cuda(gpu_id)
   else:
     raise Exception("invalid modelType '%s'" % str(modelType))
 
@@ -622,9 +622,9 @@ def runModel(
     nIter = 0
     for i, data in enumerate(loader, 0):
       inputs, labelsAndScore = data
-      scores = ag.Variable(labelsAndScore[:,-1].cuda())
-      labels = labelsAndScore[:,:-1].cuda()
-      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
+      scores = ag.Variable(labelsAndScore[:,-1].cuda(gpu_id))
+      labels = labelsAndScore[:,:-1].cuda(gpu_id)
+      inputs, labels = ag.Variable(inputs.cuda(gpu_id)), ag.Variable(labels.cuda(gpu_id))
       outputs = net(inputs,False)
       scores = scores.view(len(scores), 1).expand(outputs.size())
 
@@ -641,11 +641,11 @@ def runModel(
       # get the inputs
       inputs, labelsAndScore = data
 
-      scores = ag.Variable(labelsAndScore[:,-1].cuda()) # Last row is scores
+      scores = ag.Variable(labelsAndScore[:,-1].cuda(gpu_id)) # Last row is scores
       labels = labelsAndScore[:,:-1]
       
       # wrap them in Variable
-      inputs, labels = ag.Variable(inputs.cuda()), ag.Variable(labels.cuda())
+      inputs, labels = ag.Variable(inputs.cuda(gpu_id)), ag.Variable(labels.cuda(gpu_id))
       
       # zero the parameter gradients
       optimizer.zero_grad()
@@ -678,7 +678,7 @@ def runModel(
 
   torch.save(net, modelName)
 
-def computeAllFeatures(model, dataSet):
+def computeAllFeatures(model, dataSet, gpu_id):
   """
   model: a subclass of nn.Module, used to compute features
   dataSet: a torch.DataSet with the inputs and expected outputs.
@@ -692,7 +692,7 @@ def computeAllFeatures(model, dataSet):
   ret = torch.Tensor()
   for i, data in enumerate(trainloader, 0):
     inputs, _ = data
-    inputs = ag.Variable(inputs.cuda())
+    inputs = ag.Variable(inputs.cuda(gpu_id))
     outputs = model(inputs, False)
     ret = torch.cat([ret, outputs.data.cpu()])
   return ret

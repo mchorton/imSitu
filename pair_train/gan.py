@@ -112,7 +112,7 @@ class NetG(nn.Module):
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
     logging.getLogger(__name__).info("Building Generator network")
     logging.getLogger(__name__).info("--> Input size: %d" % (self.inputSize + ydataLength))
-  def forward(self, z, conditionals, train=False, ignoreCond=False): # TODO pick up here.
+  def forward(self, z, conditionals, train=False, ignoreCond=False):
     """
     Generate an image that matches the given conditionals
     z - the input noise (possibly empty)
@@ -322,46 +322,56 @@ def redirectOutputAndTrain(args):
   mt.setOutputToFiles(logFileName)
   logging.getLogger(__name__).info("Training gan in process %d" % os.getpid())
   logging.getLogger(__name__).info("Using gpu %d" % args[3])
-  trainOneGanArgstyle(args)
+  try:
+    trainOneGanArgstyle(args)
+  except Exception as e:
+    logging.getLogger(__name__).info("Exception while training process: %s" % str(e))
 
 def trainOneGanArgstyle(args):
   trainOneGan(*args)
+# TODO why not kwargs?
 def trainOneGan(
-    ganFileName, datasetFileName, logFileName, gpuId, ganTrainer, 
+    ganFileName, datasetFileName, logFileName, gpu_id, ganTrainer, 
     parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir, kwargs):
+
+  logging.getLogger(__name__).info("Training GAN")
+  logging.getLogger(__name__).info("gpu_id is %d" % gpu_id)
+  logging.getLogger(__name__).info("kwargs is %s" % str(kwargs))
   ganTrainer.train(
       datasetFileName, ganFileName, useScore=useScore, logFileName=logFileName,
-      gpu_id=gpuId)
+      gpu_id=gpu_id)
   # Run the parzen window fit. Save the results as a string.
   basename = os.path.splitext(os.path.basename(datasetFileName))[0]
   parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
   parResults = ""
+  logging.getLogger(__name__).info("Running Parzen Fit")
+
   try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpuId, **kwargs)
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpu_id, **kwargs)
     parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
+    logging.getLogger(__name__).info("Exception during parzen fit: %s" % parResults)
   with open(parzenName, "w") as parFile:
     parFile.write(str(parResults))
 
   # Run the ablation
+  logging.getLogger(__name__).info("Running Ablation")
   ablationName = os.path.join(ablationDirectory, "%s.ablation" % basename)
-  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, ganTrainer, useScore=useScore, logFileName=logFileName, gpu_id=gpuId)
+  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, ganTrainer, useScore=useScore, logFileName=logFileName, gpu_id=gpu_id)
   with open(ablationName, "w") as lossFile:
     lossFile.write("Loss=%s" % str(myLoss))
 
 def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
-  # TODO nice to do something fancier. For now, just shard jobs between these 
-  # GPUs
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
   seqOverride = kwargs.get("seqOverride", False)
-  activeGpus = kwargs.get("activeGpus", [0, 1, 2, 3])
+  activeGpus = kwargs["activeGpus"]
   nGpus = len(activeGpus)
   taskList = []
   for i, filename in enumerate(os.listdir(datasetDirectory)):
     filenameNoExt = os.path.splitext(filename)[0]
-    gpuId = i % nGpus
+    gpu_id = activeGpus[i % nGpus]
     taskList.append(
         (
             os.path.join(
@@ -370,7 +380,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             os.path.join(datasetDirectory, filename),
             os.path.join(
                 logFileDirectory, filenameNoExt + ".log"),
-            gpuId,
+            gpu_id,
             ganTrainer,
             parzenDirectory,
             ablationDirectory,
@@ -378,6 +388,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             pairtraindir,
             featdir,
             kwargs))
+  logging.getLogger(__name__).info("task list: %s" % str(taskList))
 
   if not seqOverride:
     pool = multiprocessing.Pool(processes=procsPerGpu*nGpus, maxtasksperchild=1)
@@ -407,9 +418,6 @@ def genDataAndTrainIndividualGansStubTest():
       gdroupout=0.05,
       useScore=False,
       seqOverride=True)
-
-# TODO:
-# 1. why is it more pairs with mode_all?
 
 def genDataAndTrainIndividualGansStub():
   genDataAndTrainIndividualGans(
@@ -473,27 +481,53 @@ def genDataAndTrainIndividualGans(
     os.makedirs(ganLoc)
   # Start a process to monitor the log directory and create graph outputs.
   logging.getLogger(__name__).info("making graph-creation process")
-  graphmaker = subprocess.Popen(
-      'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stderr=subprocess.STDOUT, shell=True)
-  trainIndividualGans(
-      datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
-      featdir, mapBaseName=datasetFileName, **kwargs)
-  # TODO output process logs elsewhere.
-  graphmaker.terminate()
-  graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stderr=subprocess.STDOUT, shell=True)
-  graphmaker.wait()
+  graphmakerOut = os.path.join(logFileDir, "graphmaker.log")
+  with open(graphmakerOut, "w") as gmo:
+    graphmaker = subprocess.Popen(
+        'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stdout=gmo, stderr=subprocess.STDOUT, shell=True)
+    try:
+      trainIndividualGans(
+          datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
+          featdir, mapBaseName=datasetFileName, **kwargs)
+    except Exception as e:
+      # This shouldn't happen, since trainIndividualGans() catches exceptions.
+      logging.getLogger(__name__).info("Exception while training gans: %s" % \
+          str(e))
+    logging.getLogger(__name__).info("Terminating graphmaker.")
+    graphmaker.terminate()
+    logging.getLogger(__name__).info("Running graphmaker one last time.")
+    graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stdout=gmo, stderr=gmo, shell=True)
+    graphmaker.wait()
+    logging.getLogger(__name__).info("Done running graphmaker one last time.")
 
 def trainCGAN(ganFileName, *args, **kwargs):
   nets = trainCGANNoFile(*args, ganSaveBasename = ganFileName, **kwargs)
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
+  # TODO this seems to take up GPU0? TODO...
+  # TODO try saving parameters instead?
+  # TODO this seems to be eating GPU 0's memory. Try running sequential to make
+  # sure. Also, check process IDs, make sure everything makes sense.
+  # Also, is this memory consumption really problematic? Figure out how to profile.
+  # See what's going on when the full program is run, then narrow down.
+  # Maybe part of the network lives on gpu0?
+  # Check whether gpu0 is ever used with seqOverride=False. Or, which GPU numbers
+  # are relevant, etc.
   torch.save(nets, ganFileName)
 
-def trainCGANNoFile(
-    datasetFileName,
-    ganSaveBasename = None, gpu_id=0, lr=1e-2, logPer=5,
-    batchSize=128, epochs=5, saveDir=None, savePerEpoch=5, lam=1e-2, nz=0,
-    hiddenSize=pc.IMFEATS, **kwargs):
-  logging.getLogger(__name__).info("Training gan on gpu %d" % gpu_id)
+def trainCGANNoFile(datasetFileName, **kwargs):
+  logging.getLogger(__name__).info("Got kwargs %s" % str(kwargs))
+  ganSaveBasename = kwargs.get("ganSaveBasename", None)
+  gpu_id = kwargs["gpu_id"]
+  lr = kwargs["lr"]
+  logPer = kwargs["logPer"]
+  batchSize = kwargs["batchSize"]
+  epochs = kwargs["epochs"]
+  saveDir = kwargs.get("saveDir", None)
+  savePerEpoch = kwargs.get("savePerEpoch", 5)
+  lam = kwargs["lam"]
+  nz = kwargs.get("nz", 0)
+  hiddenSize = kwargs.get("hiddenSize", pc.IMFEATS)
+
   # Set up variables.
   beta1=0.9999
   mapBaseName = kwargs.get("mapBaseName", datasetFileName)
@@ -566,13 +600,13 @@ def trainCGANNoFile(
 
       if epoch % decayPer == decayPer - 1:
         for param_group in optimizerG.param_groups:
-          logging.getLogger(__name__).info("optG: prev rate: %.4f" % param_group['lr'])
+          logging.getLogger(__name__).info("optG: prev rate: %f" % param_group['lr'])
           param_group['lr'] = param_group['lr'] * decayRate
-          logging.getLogger(__name__).info("optG: new  rate: %.4f" % param_group['lr'])
+          logging.getLogger(__name__).info("optG: new  rate: %f" % param_group['lr'])
         for param_group in optimizerD.param_groups:
-          logging.getLogger(__name__).info("optD: prev rate: %.4f" % param_group['lr'])
+          logging.getLogger(__name__).info("optD: prev rate: %f" % param_group['lr'])
           param_group['lr'] = param_group['lr'] * decayRate
-          logging.getLogger(__name__).info("optD: new  rate: %.4f" % param_group['lr'])
+          logging.getLogger(__name__).info("optD: new  rate: %f" % param_group['lr'])
   return netD, netG
 
 # TODO turn this into a class.
@@ -580,6 +614,7 @@ def networkUpdateStep(
     netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, i, 
     style, optimizerD, optimizerG, criterion, l1Criterion, logPer, lam, epoch,
     epochs, nSamples, logFile, useScore):
+  # TODO kwargs...
   real_label = 1
   fake_label = 0
   # Update D network
@@ -660,21 +695,23 @@ def networkUpdateStep(
 
 def evaluateGANModelAndAblation(ganModelFile, datasetFileName, ganTrainer, **kwargs):
   logging.getLogger(__name__).info("Evaluating original model")
-  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, kwargs["useScore"], gpu_id=kwargs["gpu_id"])
+  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, **kwargs)
   logging.getLogger(__name__).info("Training ablation")
   kwargs["ganSaveBasename"] = None
   nets = ganTrainer.trainNoFile(datasetFileName, ignoreCond=True, **kwargs)
   logging.getLogger(__name__).info("Evaluating ablation model")
-  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, kwargs["useScore"], gpu_id=kwargs["gpu_id"], disableevganprog=kwargs.get("disableevganprog", True))
+  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
   return {"True Loss": trueLoss, "Ablated Loss:": ablatedLoss}
 
-def evaluateGANModel(ganModelFile, datasetFileName, useScore, gpu_id=2):
+def evaluateGANModel(ganModelFile, datasetFileName, **kwargs):
   nets = torch.load(ganModelFile)
-  return evaluateGANModelNoFile(nets, datasetFileName, useScore, gpu_id=gpu_id)
+  return evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
 
-def evaluateGANModelNoFile(
-    nets, datasetFileName, useScore, gpu_id=2,
-    disableevganprog=True):
+def evaluateGANModelNoFile(nets, datasetFileName, **kwargs):
+  logging.getLogger(__name__).info("Evaluatig gan model: kwargs=%s" % str(kwargs))
+  gpu_id = kwargs["gpu_id"]
+  useScore = kwargs["useScore"]
+  disableevganprog = kwargs.get("disableevganprog", True)
   logging.getLogger(__name__).info("Evaluating gan model on gpu %d" % gpu_id)
   batchSize=16
   """
@@ -742,8 +779,11 @@ class GanDataLoader(object):
     assert(len(x) == 12 + 3 + pc.IMFEATS), "Invalid 'x' dimension '%d'" % len(x)
     assert(len(y) == pc.IMFEATS + 1), "Invalid 'y' dimension '%d'" % len(y)
 
-def getGANChimeras(netG, nTestPoints, yval, gpu_id=0, dropoutOn=True):
-  batchSize = 16
+def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
+  gpu_id = kwargs["gpu_id"]
+  batchSize = kwargs["batchSize"]
+  logging.getLogger(__name__).info("Getting GAN chimeras. kwargs=%s" % \
+      str(kwargs))
   out = []
   nz = netG.inputSize
   noise = ag.Variable(
@@ -768,12 +808,14 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
   # I need to fix many things about this function.
   # TODO with only 5k datapoints, this runs a 12G gpu out of memory. Seems
   # like it shouldn't... I should 
+  logging.getLogger(__name__).info("Making parzen window with settings %s" % \
+      str(kwargs))
   """
   nSamples - number of points to draw from generator when making distribution
   nTestSamples - number of points to draw from devData for testing
   """
   # Set up some values.
-  gpu_id = kwargs.get("gpu_id", 2)
+  gpu_id = kwargs["gpu_id"]
   logPer = kwargs.get("logPer", 1e12)
   bw_method = kwargs.get("bw_method", "scott")
   nSamples = kwargs.get("nSamples", 5000)
@@ -820,8 +862,8 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
 
 
     dataTensor = getGANChimeras(
-        netG, nSamples, fullConditional, gpu_id=gpu_id,
-        dropoutOn=True if netG.inputSize < 1 else False)
+        netG, nSamples, fullConditional, 
+        dropoutOn=True if netG.inputSize < 1 else False, **kwargs)
     assert(dataTensor.size() == torch.Size([nSamples, pc.IMFEATS])), \
         "Invalid dataTensor.size()=%s" % str(dataTensor.size())
     kde_train_input = torch.transpose(dataTensor, 0, 1).data.cpu().numpy()
