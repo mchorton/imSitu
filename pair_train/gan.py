@@ -28,6 +28,8 @@ import pair_train.dashboard as dash
 import subprocess
 import utils.methods as mt
 import data as dataman
+import pandas as pd
+import utils.plotutils as pu
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -306,16 +308,16 @@ def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileNa
 class GanTrainer(object):
   def __init__(self, **kwargs):
     self.kwargs = kwargs
-  def train(self, datasetFileName, ganFileName, **moreKwargs):
+  def train(self, datasetFileName, pairDataManager, ganFileName, **moreKwargs):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
     trainCGAN(
-        ganFileName, datasetFileName, **kwargs)
-  def trainNoFile(self, datasetFileName, **moreKwargs):
+        ganFileName, datasetFileName, pairDataManager, **kwargs)
+  def trainNoFile(self, datasetFileName, pairDataManager, **moreKwargs):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
     return trainCGANNoFile(
-        datasetFileName, **kwargs)
+        datasetFileName, pairDataManager, **kwargs)
 
 def redirectOutputAndTrain(args): 
   logFileName = args[2]
@@ -334,12 +336,14 @@ def trainOneGan(
     ganFileName, datasetFileName, logFileName, gpu_id, ganTrainer, 
     parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir, kwargs):
 
+  pairDataManager = dataman.PairDataManager(pairtraindir, featdir)
   logging.getLogger(__name__).info("Training GAN")
   logging.getLogger(__name__).info("gpu_id is %d" % gpu_id)
   logging.getLogger(__name__).info("kwargs is %s" % str(kwargs))
   ganTrainer.train(
-      datasetFileName, ganFileName, useScore=useScore, logFileName=logFileName,
-      gpu_id=gpu_id)
+      datasetFileName, pairDataManager, ganFileName, useScore=useScore,
+      logFileName=logFileName,  gpu_id=gpu_id,
+      trainGraphBn=os.path.splitext(logFileName)[0])
   # Run the parzen window fit. Save the results as a string.
   basename = os.path.splitext(os.path.basename(datasetFileName))[0]
   parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
@@ -347,7 +351,7 @@ def trainOneGan(
   logging.getLogger(__name__).info("Running Parzen Fit")
 
   try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairtraindir, featdir, gpu_id=gpu_id, **kwargs)
+    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairDataManager, gpu_id=gpu_id, **kwargs)
     parResults = str(probs.values())
   except Exception as e:
     parResults = str(e)
@@ -358,7 +362,7 @@ def trainOneGan(
   # Run the ablation
   logging.getLogger(__name__).info("Running Ablation")
   ablationName = os.path.join(ablationDirectory, "%s.ablation" % basename)
-  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, ganTrainer, useScore=useScore, logFileName=logFileName, gpu_id=gpu_id)
+  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, pairDataManager, ganTrainer, kwargs["epochs"], useScore=useScore, logFileName=logFileName, gpu_id=gpu_id)
   with open(ablationName, "w") as lossFile:
     lossFile.write("Loss=%s" % str(myLoss))
 
@@ -388,17 +392,50 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             pairtraindir,
             featdir,
             kwargs))
-  logging.getLogger(__name__).info("task list: %s" % str(taskList))
 
   if not seqOverride:
-    pool = multiprocessing.Pool(processes=procsPerGpu*nGpus, maxtasksperchild=1)
-    logging.getLogger(__name__).info(
-        "Beginning multiprocessing. Check individual process logs.")
-    for _ in tqdm.tqdm(
-        pool.imap(redirectOutputAndTrain, taskList), total=len(taskList),
-        desc="Processes completed"):
-      # I think this is the only way to get tqdm to work properly (empty loop)
-      pass
+    gpuResources = [k for _ in xrange(procsPerGpu) for k in activeGpus]
+    pool = multiprocessing.Pool(processes=len(gpuResources), maxtasksperchild=1)
+    pending = []
+
+    with open(
+        os.path.join(logFileDirectory, "multiproc_log.log"), "w+") as mlog:
+
+      for task in tqdm.tqdm(taskList, total=len(taskList), desc="Dispatching jobs"):
+        while not gpuResources:
+          mlog.write("Querying ready tasks\n")
+          ready = []
+          notready = []
+          for p, gpu_id in pending:
+            p.wait(1) # TODO without this, it doesn't work? It should...
+            if p.ready():
+              ready.append((p, gpu_id))
+              mlog.write("Process ready. p.get()=%s\n" % str(p.get()))
+            else:
+              notready.append((p, gpu_id))
+          mlog.write("Ready: %s\n" % str(ready))
+          mlog.write("NotReady: %s\n" % str(notready))
+          
+          for p, gpu_id in ready:
+            gpuResources.append(gpu_id)
+          del ready
+          pending = notready
+          mlog.write("Sleeping\n")
+          import time; time.sleep(1)
+        mlog.write("Resources is %s\n" % gpuResources)
+        gpu_id = gpuResources.pop()
+        t = list(task)
+        t[3] = gpu_id # TODO use kwargs.
+        task = tuple(t)
+        mlog.write("Starting task on gpu_id=%d\n" % gpu_id)
+        mlog.write("task is %s\n" % str(task))
+        pending.append((pool.apply_async(redirectOutputAndTrain, (task,)), gpu_id))
+      # TODO we now need to wait for the pending tasks.
+      logging.getLogger(__name__).info("Waiting for remaining tasks to finish.")
+      for p, gpu_id in tqdm.tqdm(pending, total=len(pending), desc="Finishing remaining tasks"):
+        p.wait()
+        mlog.write("Process ready. p.get()=%s" % str(p.get()))
+
   else:
     for task in taskList:
       trainOneGanArgstyle(task)
@@ -487,8 +524,8 @@ def genDataAndTrainIndividualGans(
         'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stdout=gmo, stderr=subprocess.STDOUT, shell=True)
     try:
       trainIndividualGans(
-          datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
-          featdir, mapBaseName=datasetFileName, **kwargs)
+            datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
+            featdir, mapBaseName=datasetFileName, **kwargs)
     except Exception as e:
       # This shouldn't happen, since trainIndividualGans() catches exceptions.
       logging.getLogger(__name__).info("Exception while training gans: %s" % \
@@ -496,6 +533,7 @@ def genDataAndTrainIndividualGans(
     logging.getLogger(__name__).info("Terminating graphmaker.")
     graphmaker.terminate()
     logging.getLogger(__name__).info("Running graphmaker one last time.")
+    # Can't I run this locally? TODO
     graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stdout=gmo, stderr=gmo, shell=True)
     graphmaker.wait()
     logging.getLogger(__name__).info("Done running graphmaker one last time.")
@@ -514,7 +552,93 @@ def trainCGAN(ganFileName, *args, **kwargs):
   # are relevant, etc.
   torch.save(nets, ganFileName)
 
-def trainCGANNoFile(datasetFileName, **kwargs):
+class TrainGraphGenerator(object):
+    def __init__(self, pairDataManager, graphbn, **kwargs):
+        self._kwargs = kwargs # TODO
+        self._graphbn = graphbn
+        self._data = pd.DataFrame()
+        self._pdm = pairDataManager
+        if self._graphbn is None:
+            return
+        self._graphconfig = [
+                {
+                        "chosen": ["val1", "val3"],
+                        "loc": self._graphbn + ".exp.jpg",
+                        "title": "TITLE",
+                        "xlabel": "XAXIS",
+                        "ylabel": "YAXIS"},
+                {
+                        "chosen": ["Parzen Average"],
+                        "loc": self._graphbn + ".parzen.jpg",
+                        "title": "Parzen Window Fit",
+                        "xlabel": "Epoch",
+                        "ylabel": "Log Prob"},
+                {
+                        "chosen": ["True Loss", "Ablated Loss"],
+                        "loc": self._graphbn + ".abl.jpg",
+                        "title": "Ablation Losses",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss"}]
+
+
+    def generate(self, netD, netG, epoch, datasetFileName):
+        if self._graphbn is None:
+            return
+        updates = self._calculateUpdates(netD, netG, epoch, datasetFileName)
+        self._appendValues(*updates)
+        self._makeGraphs()
+
+    # TODO don't call this every time.
+    def _calculateUpdates(self, netD, netG, epoch, datasetFileName):
+        logging.getLogger(__name__).info("Calculating updates")
+        ganTrainer = GanTrainer(**self._kwargs)
+        updates = {}
+        # TODO this idea is weird. We train lots of ablations. We also train
+        # them longer than the original network...
+        if epoch % self._kwargs["updateAblationPer"] == 0:
+            losses = evaluateGANModelAndAblationNoFile((netD, netG), datasetFileName, self._pdm, ganTrainer, epoch, **self._kwargs)
+            updates.update(losses)
+        if epoch % self._kwargs["updateParzenPer"] == 0:
+            probs = evaluateParzenProb(netG, datasetFileName, self._pdm, **self._kwargs)
+#def evaluateParzenProb(netG, ganDataSet, pairtraindir, featdir, **kwargs):
+            updates.update(probs)
+        # TODO get the ablation numbers, parzen numbers, etc.
+        # TODO put everything all together, then make graphs.
+        # TODO get rid of this debugging stuff.
+        updates.update({"val1": epoch * 2, "val2": epoch + 1})
+        if epoch % 2 == 0:
+            updates["val3"] = epoch
+        return epoch, updates
+    def _appendValues(self, epoch, valdict):
+        argdict = {k: pd.Series([v], index=[epoch]) for k,v in valdict.iteritems()}
+        logging.getLogger(__name__).info("argdict is %s" % str(argdict))
+        self._data = self._data.append(pd.DataFrame(argdict))
+    def _makeGraphs(self):
+        logging.getLogger(__name__).info("self._data=%s" % str(self._data))
+        for gc in self._graphconfig:
+            try:
+                self._makeOneGraph(gc)
+            except Exception as e:
+                logging.getLogger(__name__).info("Error making graph: %s" % str(e))
+        # Write the source-of-truth
+        dest = self._graphbn + "source.csv"
+        tmp = mt.pathinsert(dest, "tmp")
+        self._data.to_csv(tmp)
+        os.rename(tmp, dest)
+
+    def _makeOneGraph(self, gc):
+        chosen = gc["chosen"]
+        mydata = self._data[chosen].dropna()
+        x = mydata.index.values
+        ySeriesIterable = mydata.values.T
+        yLegendIterable = chosen
+        temploc = mt.pathinsert(gc["loc"], "tmp")
+        pu.makeNPlotDefault(
+                x, ySeriesIterable, yLegendIterable, gc["title"], gc["xlabel"],
+                gc["ylabel"], temploc, **gc.get("kwargs", {}))
+        os.rename(temploc, gc["loc"])
+
+def trainCGANNoFile(datasetFileName, pairDataManager, **kwargs):
   logging.getLogger(__name__).info("Got kwargs %s" % str(kwargs))
   ganSaveBasename = kwargs.get("ganSaveBasename", None)
   gpu_id = kwargs["gpu_id"]
@@ -550,6 +674,8 @@ def trainCGANNoFile(datasetFileName, **kwargs):
   # Whether to ignore the conditioning variable. Useful for baselines.
   ignoreCond = kwargs.get("ignoreCond", False) 
   logFileName = kwargs.get("logFileName", None)
+  trainGraphBn = kwargs.get("trainGraphBn", None)
+
   useScore = kwargs.get("useScore", False)
   # TODO sanitize for unused variables.
   # Load variables, begin training.
@@ -579,6 +705,7 @@ def trainCGANNoFile(datasetFileName, **kwargs):
       sys.exit(1)
     os.makedirs(saveDir)
 
+  trainGraphGenerator = TrainGraphGenerator(pairDataManager, trainGraphBn, **kwargs)
   with open(logFileName, "w") as logFile:
     for epoch in tqdm.tqdm(
         range(epochs), total=epochs, desc="Epochs completed: ",
@@ -591,6 +718,9 @@ def trainCGANNoFile(datasetFileName, **kwargs):
             netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id,
             ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion,
             logPer, lam, epoch, epochs, len(dataloader), logFile, useScore)
+
+      # TODO we will want validation data for this as well.
+      trainGraphGenerator.generate(netD, netG, epoch, datasetFileName)
           
       # save the training files
       if saveDir is not None and ganSaveBasename is not None and epoch % savePerEpoch == (savePerEpoch - 1):
@@ -688,20 +818,27 @@ def networkUpdateStep(
     if logFile:
       logFile.write(logString + '\n')
 
-    #tqdm.tqdm.write(logString)
     logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, epochs, i, nSamples,
                  errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
 
-def evaluateGANModelAndAblation(ganModelFile, datasetFileName, ganTrainer, **kwargs):
+def evaluateGANModelAndAblation(ganModelFile, *args, **kwargs):
+  nets = torch.load(ganModelFile)
+  evaluateGANModelAndAblationNoFile(nets, *args, **kwargs)
+
+# TODO checkpoint file, etc.
+def evaluateGANModelAndAblationNoFile(nets, datasetFileName, pairDataManager, ganTrainer, epochOverride, **kwargs):
   logging.getLogger(__name__).info("Evaluating original model")
-  trueLoss = evaluateGANModel(ganModelFile, datasetFileName, **kwargs)
+  trueLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
   logging.getLogger(__name__).info("Training ablation")
   kwargs["ganSaveBasename"] = None
-  nets = ganTrainer.trainNoFile(datasetFileName, ignoreCond=True, **kwargs)
+  kwargs["ignoreCond"] = True
+  kwargs["trainGraphBn"] = None
+  kwargs["epochs"] = epochOverride
+  nets = ganTrainer.trainNoFile(datasetFileName, pairDataManager, **kwargs)
   logging.getLogger(__name__).info("Evaluating ablation model")
   ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
-  return {"True Loss": trueLoss, "Ablated Loss:": ablatedLoss}
+  return {"True Loss": trueLoss, "Ablated Loss": ablatedLoss}
 
 def evaluateGANModel(ganModelFile, datasetFileName, **kwargs):
   nets = torch.load(ganModelFile)
@@ -797,11 +934,30 @@ def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
     out = [out]
   return out[0][:nTestPoints]
 
-def parzenWindowFromFile(ganModelFile, ganDevSet, pairtraindir, featdir, **kwargs):
-  gDiskDevLoader = GanDataLoader(ganDevSet)
+def parzenWindowFromFile(ganModelFile, *args, **kwargs):
   _, netG = torch.load(ganModelFile)
-  pdm = dataman.PairDataManager(pairtraindir, featdir)
-  return parzenWindowProb(netG, gDiskDevLoader.data, pdm, **kwargs)
+  parzenWindowGanAndDevFile(netG, *args, **kwargs)
+
+def parzenWindowGanAndDevFile(netG, ganDevSet, pairDataManager, **kwargs):
+  gDiskDevLoader = GanDataLoader(ganDevSet)
+  return parzenWindowProb(netG, gDiskDevLoader.data, pairDataManager, **kwargs)
+
+def evaluateParzenProb(netG, datasetFileName, pairDataManager, **kwargs):
+    return {"Parzen Average": 0}
+    try:
+      probs = parzenWindowGanAndDevFile(netG, datasetFileName, pairDataManager, **kwargs)
+    except Exception as e:
+      logging.getLogger(__name__).info("Error computing parzen value: %s" % str(e))
+      # TODO
+      return {"Parzen Average": 0}
+    # TODO just take a flat average of them, I guess?
+    # TODO this method should also give back dev set stuff.
+    _sum = 0.
+    _den = 0.
+    for k,v in probs.iteritems():
+        _sum += np.sum(v)
+        _den += len(v)
+    return {"Parzen Average": _sum / _den}
 
 def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
   # TODO this is using ydata as the conditional! It shouldn't.

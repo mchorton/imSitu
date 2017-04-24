@@ -169,11 +169,12 @@ class gaussian_kde(object):
     >>> plt.show()
 
     """
-    def __init__(self, dataset, bw_method=None):
+    def __init__(self, dataset, bw_method=None, ignore_cov=True):
         self.dataset = atleast_2d(dataset)
         if not self.dataset.size > 1:
             raise ValueError("`dataset` input should have multiple elements.")
 
+        self.ignore_cov = ignore_cov
         self.d, self.n = self.dataset.shape
         self.set_bandwidth(bw_method=bw_method)
 
@@ -511,17 +512,25 @@ class gaussian_kde(object):
         self.factor = self.covariance_factor()
         # Cache covariance and inverse covariance of the data
         if not hasattr(self, '_data_inv_cov'):
-            self._data_covariance = atleast_2d(np.cov(self.dataset, rowvar=1,
-                                               bias=False))
-            self._data_inv_cov = linalg.inv(self._data_covariance)
+            if self.ignore_cov:
+                self._data_covariance = np.identity(self.d)
+                self._data_inv_cov = np.identity(self.d)
+            else:
+                self._data_covariance = atleast_2d(
+                        np.cov(self.dataset, rowvar=1, bias=False))
+                self._data_inv_cov = linalg.inv(self._data_covariance)
 
         self.covariance = self._data_covariance * self.factor**2
         self.inv_cov = self._data_inv_cov / self.factor**2
-        self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
 
-        sign, logdet = slogdet(2*pi*self.covariance)
-        assert(sign == 1), "Invalid slogdet, sign=%d, logdet=%f" % (sign, logdet)
-        self._log_norm_factor = log(self.n) + 0.5 * logdet
+        if not self.ignore_cov:
+            self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
+
+        else:
+            sign, logdet = slogdet(2*pi*self.covariance)
+            assert(sign == 1), "Invalid slogdet, sign=%d, logdet=%f" % \
+                    (sign, logdet)
+            self._log_norm_factor = log(self.n) + 0.5 * logdet
     def pdf(self, x):
         """
         Evaluate the estimated pdf on a provided set of points.

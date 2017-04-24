@@ -132,6 +132,7 @@ class MultiganParameters(object):
                 "batchSize": 32,
                 "gdropout": 0.05,
                 "useScore": False,
+                "activeGpus": [1, 2, 3],
                 "style": "trgan"}
 
 class MultiganTrainer(object):
@@ -166,9 +167,11 @@ def runTestExp():
     runner.generateGanModels(MultiganTrainer(mp))
 
 def runPartialTestExp(expdir="data/test_exp/", mode="max"):
+    """
     if os.path.exists("data/test_exp/"):
         import shutil
         shutil.rmtree("data/test_exp/")
+    """
     dirconfig = DirConfig(expdir, False)
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
@@ -180,16 +183,18 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     #dataman.shardAndSave(pdm, datasetDir, minDataPts=0)
 
     mp = MultiganParameters(dirconfig)
-    mp.kwargs["epochs"] = 200
+    mp.kwargs["epochs"] = 20
     mp.kwargs["logPer"] = 1
     mp.kwargs["depth"] = 32
     mp.kwargs["genDepth"] = 32
-    mp.kwargs["minDataPts"] = 0
-    mp.kwargs["procsPerGpu"] = 3
+    mp.kwargs["minDataPts"] = 3
     mp.kwargs["lr"] = 1e-4
     mp.kwargs["seqOverride"] = False
     mp.kwargs["nSamples"] = 1000
     mp.kwargs["activeGpus"] = [1, 2, 3]
+    mp.kwargs["updateAblationPer"] = 15
+    mp.kwargs["updateParzenPer"] = 10
+    mp.kwargs["procsPerGpu"] = 1
 
     runner.generateGanModels(MultiganTrainer(mp))
     """
@@ -216,3 +221,43 @@ def runLowlearn():
     mp.kwargs["bw_method"] = 2 ** 18
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+def runLowlearnNice():
+    dirconfig = DirConfig("data/manygan_lowlearn_nice/", cautious=True)
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    runner.generateData(DataGenerator(dirconfig, test=False))
+
+    mp = MultiganParameters(dirconfig)
+    # TODO too low?
+    mp.kwargs["lr"] = 1e-4
+    mp.kwargs["bw_method"] = 2 ** 18
+    mp.kwargs["updateAblationPer"] = 15
+    mp.kwargs["updateParzenPer"] = 10
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+def runLowlearnNice2():
+    dirconfig = DirConfig("data/manygan_lowlearn_nice_3/", cautious=False)
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    #runner.generateData(DataGenerator(dirconfig, test=False))
+
+    mp = MultiganParameters(dirconfig)
+    # TODO too low?
+    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["bw_method"] = 2 ** 18
+    mp.kwargs["updateAblationPer"] = 15
+    mp.kwargs["updateParzenPer"] = 10
+    mp.kwargs["nSamples"] = 500 # TODO could be larger...
+    mp.kwargs["depth"] = 16
+    mp.kwargs["genDepth"] = 16
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 1
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+if __name__ == '__main__':
+    runLowlearnNice2()

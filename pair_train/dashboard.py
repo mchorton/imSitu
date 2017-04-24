@@ -20,6 +20,8 @@ class GanDashboardMaker(object):
         dashParzenHandler = data.ShardedDataHandler(parzenDir, ".parzen")
         plotHandler = data.ShardedDataHandler(trainJpgDir, ".log.jpg")
         ablationHandler = data.ShardedDataHandler(ablationDir, ".ablation")
+        parzenTrainimgHandler = data.ShardedDataHandler(trainJpgDir, ".parzen.jpg")
+        ablTrainimgHandler = data.ShardedDataHandler(trainJpgDir, ".abl.jpg")
         htmlTable.addRow(
                 "N1, N2", "Training Graph", "Parzen Fits", "Num Data Points",
                 "Losses")
@@ -30,6 +32,12 @@ class GanDashboardMaker(object):
             tableRow.append(html.ImgRef(
                     src='/%s' % os.path.relpath(
                             plotHandler.keyToPath((n1, n2)), ".")))
+            tableRow.append(html.ImgRef(
+                    src='/%s' % os.path.relpath(
+                            parzenTrainimgHandler.keyToPath((n1, n2)), ".")))
+            tableRow.append(html.ImgRef(
+                    src='/%s' % os.path.relpath(
+                            ablTrainimgHandler.keyToPath((n1, n2)), ".")))
             tableRow.append(html.PhpTextFile(
                 os.path.abspath(dashParzenHandler.keyToPath((n1, n2)))))
             tableRow.append("|data|=%d" % data.getNSamplesFromDatafile(shardedDataHandler.keyToPath((n1, n2))))

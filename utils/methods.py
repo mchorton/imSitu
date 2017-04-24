@@ -48,3 +48,10 @@ def setOutputToFiles(basename):
 
     # Change the root logger to use the new stdout
     logging.reconfigure()
+
+def pathinsert(pathname, inserted):
+    """
+    inserts "inserted" into pathname, just before the extension
+    """
+    pre, post = os.path.splitext(pathname)
+    return "%s%s%s" % (pre, inserted, post)

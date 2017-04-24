@@ -78,6 +78,25 @@ def makeTwoPlot(x, y, z, ylegend, zlegend, title, xlabel, ylabel, xscale, yscale
   plt.savefig(loc)
   plt.clf()
 
+class GraphMaker(object):
+    def __init__(self, **kwargs):
+        self._kwargs = kwargs
+    def makeNPlot(x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, loc):
+        makeNPlot(
+                x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel,
+                self._kwargs["xscale"], self._kwargs["yscale"], loc,
+                self._kwargs["fontsize"], self._kwargs["labelsize"],
+                self._kwargs["tickwidth"], self._kwargs["ticklength"])
+
+# TODO make one that takes kwargs... TODO how do with the defaults?
+
+def makeNPlotDefault(
+        x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, loc,
+        xscale="linear", yscale="linear", fontsize=10, labelsize=10, 
+        tickwidth=1, ticklength=1):
+    makeNPlot(x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel,
+    xscale, yscale, loc, fontsize, labelsize, tickwidth, ticklength)
+
 def makeNPlot(x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, xscale, yscale, loc, fontsize, labelsize, tickwidth, ticklength):
 
   plots = []
