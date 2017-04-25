@@ -344,27 +344,6 @@ def trainOneGan(
       datasetFileName, pairDataManager, ganFileName, useScore=useScore,
       logFileName=logFileName,  gpu_id=gpu_id,
       trainGraphBn=os.path.splitext(logFileName)[0])
-  # Run the parzen window fit. Save the results as a string.
-  basename = os.path.splitext(os.path.basename(datasetFileName))[0]
-  parzenName = os.path.join(parzenDirectory, "%s.parzen" % basename)
-  parResults = ""
-  logging.getLogger(__name__).info("Running Parzen Fit")
-
-  try:
-    probs = parzenWindowFromFile(ganFileName, datasetFileName, pairDataManager, gpu_id=gpu_id, **kwargs)
-    parResults = str(probs.values())
-  except Exception as e:
-    parResults = str(e)
-    logging.getLogger(__name__).info("Exception during parzen fit: %s" % parResults)
-  with open(parzenName, "w") as parFile:
-    parFile.write(str(parResults))
-
-  # Run the ablation
-  logging.getLogger(__name__).info("Running Ablation")
-  ablationName = os.path.join(ablationDirectory, "%s.ablation" % basename)
-  myLoss = evaluateGANModelAndAblation(ganFileName, datasetFileName, pairDataManager, ganTrainer, kwargs["epochs"], useScore=useScore, logFileName=logFileName, gpu_id=gpu_id)
-  with open(ablationName, "w") as lossFile:
-    lossFile.write("Loss=%s" % str(myLoss))
 
 def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
   ganTrainer = GanTrainer(**kwargs)
@@ -562,17 +541,35 @@ class TrainGraphGenerator(object):
             return
         self._graphconfig = [
                 {
-                        "chosen": ["val1", "val3"],
-                        "loc": self._graphbn + ".exp.jpg",
-                        "title": "TITLE",
-                        "xlabel": "XAXIS",
-                        "ylabel": "YAXIS"},
-                {
                         "chosen": ["Parzen Average"],
                         "loc": self._graphbn + ".parzen.jpg",
                         "title": "Parzen Window Fit",
                         "xlabel": "Epoch",
                         "ylabel": "Log Prob"},
+                {
+                        "chosen": ["Loss_D", "Loss_G"],
+                        "loc": self._graphbn + ".dgloss.jpg",
+                        "title": "Disc / Gen Loss",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss"},
+                {
+                        "chosen": ["D(x)", "D_G_z1"],
+                        "loc": self._graphbn + ".predictions.jpg",
+                        "title": "Disc. Prediction on Real / Fake",
+                        "xlabel": "Epoch",
+                        "ylabel": "Prediction (1=Real, 0=Fake)"},
+                {
+                        "chosen": ["D_G_z1", "D_G_z2"],
+                        "loc": self._graphbn + ".dgz.jpg",
+                        "title": "Change in Predictions for Fake",
+                        "xlabel": "Epoch",
+                        "ylabel": "Prediction (1=Real, 0=Fake)"},
+                {
+                        "chosen": ["Loss_L1"],
+                        "loc": self._graphbn + ".l1loss.jpg",
+                        "title": "L1 Loss",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss"},
                 {
                         "chosen": ["True Loss", "Ablated Loss"],
                         "loc": self._graphbn + ".abl.jpg",
@@ -581,34 +578,30 @@ class TrainGraphGenerator(object):
                         "ylabel": "Loss"}]
 
 
-    def generate(self, netD, netG, epoch, datasetFileName):
+    def generate(self, netD, netG, epoch, losses, datasetFileName):
         if self._graphbn is None:
             return
-        updates = self._calculateUpdates(netD, netG, epoch, datasetFileName)
-        self._appendValues(*updates)
+        updates = self._calculateUpdates(netD, netG, epoch, losses, datasetFileName)
+        self._appendValues(epoch, updates)
         self._makeGraphs()
 
     # TODO don't call this every time.
-    def _calculateUpdates(self, netD, netG, epoch, datasetFileName):
+    def _calculateUpdates(self, netD, netG, epoch, losses, datasetFileName):
         logging.getLogger(__name__).info("Calculating updates")
         ganTrainer = GanTrainer(**self._kwargs)
         updates = {}
         # TODO this idea is weird. We train lots of ablations. We also train
         # them longer than the original network...
-        if epoch % self._kwargs["updateAblationPer"] == 0:
-            losses = evaluateGANModelAndAblationNoFile((netD, netG), datasetFileName, self._pdm, ganTrainer, epoch, **self._kwargs)
+        if epoch % self._kwargs["logPer"] == 0:
             updates.update(losses)
+        if epoch % self._kwargs["updateAblationPer"] == 0:
+            abls = evaluateGANModelAndAblationNoFile((netD, netG), datasetFileName, self._pdm, ganTrainer, epoch, **self._kwargs)
+            updates.update(abls)
         if epoch % self._kwargs["updateParzenPer"] == 0:
             probs = evaluateParzenProb(netG, datasetFileName, self._pdm, **self._kwargs)
 #def evaluateParzenProb(netG, ganDataSet, pairtraindir, featdir, **kwargs):
             updates.update(probs)
-        # TODO get the ablation numbers, parzen numbers, etc.
-        # TODO put everything all together, then make graphs.
-        # TODO get rid of this debugging stuff.
-        updates.update({"val1": epoch * 2, "val2": epoch + 1})
-        if epoch % 2 == 0:
-            updates["val3"] = epoch
-        return epoch, updates
+        return updates
     def _appendValues(self, epoch, valdict):
         argdict = {k: pd.Series([v], index=[epoch]) for k,v in valdict.iteritems()}
         logging.getLogger(__name__).info("argdict is %s" % str(argdict))
@@ -714,13 +707,13 @@ def trainCGANNoFile(datasetFileName, pairDataManager, **kwargs):
           enumerate(dataloader, 0), total=len(dataloader),
           desc="Iterations completed: ", leave=False,
           disable=disablecgantrainprog):
-        networkUpdateStep(
+        lossdict = networkUpdateStep(
             netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id,
             ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion,
             logPer, lam, epoch, epochs, len(dataloader), logFile, useScore)
 
       # TODO we will want validation data for this as well.
-      trainGraphGenerator.generate(netD, netG, epoch, datasetFileName)
+      trainGraphGenerator.generate(netD, netG, epoch, lossdict, datasetFileName)
           
       # save the training files
       if saveDir is not None and ganSaveBasename is not None and epoch % savePerEpoch == (savePerEpoch - 1):
@@ -821,10 +814,19 @@ def networkUpdateStep(
     logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
               % (epoch, epochs, i, nSamples,
                  errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
+  return {
+      "Loss_D": errD.data[0],
+      "Loss_G": errG.data[0],
+      "Loss_L1": errG_L1.data[0],
+      "D(x)": D_x,
+      "D_G_z1": D_G_z1,
+      "D_G_z2": D_G_z2}
 
 def evaluateGANModelAndAblation(ganModelFile, *args, **kwargs):
   nets = torch.load(ganModelFile)
   evaluateGANModelAndAblationNoFile(nets, *args, **kwargs)
+
+#def evalGanAndAblationFromCheckpoint(nets, datasetFileName, pairDataManager, ganTrainer, epochOverride, savedAblationFile, 
 
 # TODO checkpoint file, etc.
 def evaluateGANModelAndAblationNoFile(nets, datasetFileName, pairDataManager, ganTrainer, epochOverride, **kwargs):
@@ -936,14 +938,13 @@ def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
 
 def parzenWindowFromFile(ganModelFile, *args, **kwargs):
   _, netG = torch.load(ganModelFile)
-  parzenWindowGanAndDevFile(netG, *args, **kwargs)
+  return parzenWindowGanAndDevFile(netG, *args, **kwargs)
 
 def parzenWindowGanAndDevFile(netG, ganDevSet, pairDataManager, **kwargs):
   gDiskDevLoader = GanDataLoader(ganDevSet)
   return parzenWindowProb(netG, gDiskDevLoader.data, pairDataManager, **kwargs)
 
 def evaluateParzenProb(netG, datasetFileName, pairDataManager, **kwargs):
-    return {"Parzen Average": 0}
     try:
       probs = parzenWindowGanAndDevFile(netG, datasetFileName, pairDataManager, **kwargs)
     except Exception as e:

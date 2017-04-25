@@ -18,32 +18,33 @@ class GanDashboardMaker(object):
         indexToNouncode = mt.reverseMap(torch.load(open(nouncodeToIndexFile)))
         shardedDataHandler = data.ShardedDataHandler(datasetDirectory)
         dashParzenHandler = data.ShardedDataHandler(parzenDir, ".parzen")
-        plotHandler = data.ShardedDataHandler(trainJpgDir, ".log.jpg")
         ablationHandler = data.ShardedDataHandler(ablationDir, ".ablation")
+
+        jpgConfig = [
+            (data.ShardedDataHandler(trainJpgDir, ".predictions.jpg"), "Discriminator Performance"),
+            (data.ShardedDataHandler(trainJpgDir, ".dgloss.jpg"), "Disc / Gen Loss"),
+            (data.ShardedDataHandler(trainJpgDir, ".dgz.jpg"), "Change in Predictions on Fake Imgs"),
+            (data.ShardedDataHandler(trainJpgDir, ".l1loss.jpg"), "L1 Loss"),
+            (data.ShardedDataHandler(trainJpgDir, ".parzen.jpg"), "Parzen Fit"),
+            (data.ShardedDataHandler(trainJpgDir, ".abl.jpg"), "Ablations")]
+
+        plotHandler = data.ShardedDataHandler(trainJpgDir, ".log.jpg")
         parzenTrainimgHandler = data.ShardedDataHandler(trainJpgDir, ".parzen.jpg")
         ablTrainimgHandler = data.ShardedDataHandler(trainJpgDir, ".abl.jpg")
-        htmlTable.addRow(
-                "N1, N2", "Training Graph", "Parzen Fits", "Num Data Points",
-                "Losses")
+
+        labelrow = ["N1, N2", "N Data Points"] + list(zip(*jpgConfig)[1])
+        htmlTable.addRow(*labelrow)
+
         for i, (n1, n2) in tqdm.tqdm(enumerate(shardedDataHandler.iterNounPairs())):
             tableRow = []
             intcodes = map(lambda x: indexToNouncode[x], (n1, n2))
             tableRow.append("%s\n%s\n%s" % (str((n1, n2)), str(intcodes), str(sdu.decodeNouns(*intcodes))))
-            tableRow.append(html.ImgRef(
-                    src='/%s' % os.path.relpath(
-                            plotHandler.keyToPath((n1, n2)), ".")))
-            tableRow.append(html.ImgRef(
-                    src='/%s' % os.path.relpath(
-                            parzenTrainimgHandler.keyToPath((n1, n2)), ".")))
-            tableRow.append(html.ImgRef(
-                    src='/%s' % os.path.relpath(
-                            ablTrainimgHandler.keyToPath((n1, n2)), ".")))
-            tableRow.append(html.PhpTextFile(
-                os.path.abspath(dashParzenHandler.keyToPath((n1, n2)))))
             tableRow.append("|data|=%d" % data.getNSamplesFromDatafile(shardedDataHandler.keyToPath((n1, n2))))
 
-            tableRow.append(html.PhpTextFile('%s' % 
-                os.path.abspath(ablationHandler.keyToPath((n1, n2)))))
+            for maker, _ in jpgConfig:
+                tableRow.append(html.ImgRef(
+                        src='/%s' % os.path.relpath(
+                                maker.keyToPath((n1, n2)), ".")))
             htmlTable.addRow(*tableRow)
         htmlMaker = html.HtmlMaker()
 
