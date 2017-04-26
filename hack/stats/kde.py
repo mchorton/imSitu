@@ -510,27 +510,32 @@ class gaussian_kde(object):
         covariance_factor().
         """
         self.factor = self.covariance_factor()
-        # Cache covariance and inverse covariance of the data
-        if not hasattr(self, '_data_inv_cov'):
-            if self.ignore_cov:
+
+        if self.ignore_cov:
+            if not hasattr(self, '_data_inv_cov'):
                 self._data_covariance = np.identity(self.d)
                 self._data_inv_cov = np.identity(self.d)
-            else:
-                self._data_covariance = atleast_2d(
-                        np.cov(self.dataset, rowvar=1, bias=False))
-                self._data_inv_cov = linalg.inv(self._data_covariance)
+                self.covariance = self._data_covariance * self.factor**2
+                self.inv_cov = self._data_inv_cov / self.factor**2
+            # All we need to compute is _log_norm_factor
+            self.covfactor = self.factor**2 # implicitly, times identity matr.
+            # det is self.covariance ^ d. logdet = d * log(self.covariance)
+            logdet = self.d * log(2*pi*self.covfactor)
+            self._log_norm_factor = log(self.n) + 0.5 * logdet
+            return
+
+
+        # Cache covariance and inverse covariance of the data
+        if not hasattr(self, '_data_inv_cov'):
+            self._data_covariance = atleast_2d(
+                    np.cov(self.dataset, rowvar=1, bias=False))
+            self._data_inv_cov = linalg.inv(self._data_covariance)
 
         self.covariance = self._data_covariance * self.factor**2
         self.inv_cov = self._data_inv_cov / self.factor**2
 
-        if not self.ignore_cov:
-            self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
+        self._norm_factor = sqrt(linalg.det(2*pi*self.covariance)) * self.n
 
-        else:
-            sign, logdet = slogdet(2*pi*self.covariance)
-            assert(sign == 1), "Invalid slogdet, sign=%d, logdet=%f" % \
-                    (sign, logdet)
-            self._log_norm_factor = log(self.n) + 0.5 * logdet
     def pdf(self, x):
         """
         Evaluate the estimated pdf on a provided set of points.

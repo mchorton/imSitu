@@ -55,3 +55,23 @@ def pathinsert(pathname, inserted):
     """
     pre, post = os.path.splitext(pathname)
     return "%s%s%s" % (pre, inserted, post)
+
+def shouldDo(i, doPer):
+    return i % doPer == (doPer - 1)
+
+from contextlib import contextmanager
+@contextmanager
+def perfmeasure(active, writemethod):
+    if not active:
+        yield
+        return
+    import cProfile, pstats, StringIO
+    pr = cProfile.Profile()
+    pr.enable()
+    yield
+    pr.disable()
+    s = StringIO.StringIO()
+    sortby = 'cumulative'
+    ps = pstats.Stats(pr, stream=s).sort_stats(sortby)
+    ps.print_stats()
+    writemethod(s.getvalue())

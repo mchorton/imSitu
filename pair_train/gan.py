@@ -30,6 +30,7 @@ import utils.methods as mt
 import data as dataman
 import pandas as pd
 import utils.plotutils as pu
+from traceback import print_exc
 tblib.pickling_support.install()
 
 # This is used for capturing errors from subprocesses
@@ -170,11 +171,12 @@ def checkDatasetStyle(xdata, ydata):
 class TrGanD(nn.Module):
   def __init__(
       self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs,
-      vrESize):
+      vrESize, noImg):
     super(TrGanD, self).__init__()
     self.ydataLength = (6 * wESize + 6 * vrESize) \
-                       + (vrESize) + (2 * wESize) \
-                       + pc.IMFEATS
+                       + (vrESize) + (2 * wESize)
+    if not noImg:
+      self.ydataLength += pc.IMFEATS
     self.input_layer = nn.Linear(inputSize + self.ydataLength, hiddenSize)
     self.hidden_layers = nn.ModuleList(
         [nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
@@ -184,6 +186,7 @@ class TrGanD(nn.Module):
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
 
     self.dropout = 0.
+    self.noImg = noImg
 
     logging.getLogger(__name__).info("Building Discriminator network")
     logging.getLogger(__name__).info(
@@ -207,7 +210,7 @@ class TrGanD(nn.Module):
     batchSize = testImage.size(0)
     context = getTrganContext(
         batchSize, self.contextVREmbedding, self.contextWordEmbedding,
-        conditionals)
+        conditionals, self.noImg)
     netInput = torch.cat([testImage, context], 1)
 
     x = F.dropout(
@@ -224,14 +227,16 @@ class TrGanD(nn.Module):
     return x
 
 def getTrganContext(
-    batchsize, contextVREmbedding, contextWordEmbedding, conditionals):
+    batchsize, contextVREmbedding, contextWordEmbedding, conditionals, noImg=False):
   annotations = pairnn.getContextVectors(
       contextVREmbedding, contextWordEmbedding, conditionals[:,:12], batchsize)
   role = contextVREmbedding(conditionals[:,12].long()).view(batchsize, -1)
   n1 = contextWordEmbedding(conditionals[:,13].long()).view(batchsize, -1)
   n2 = contextWordEmbedding(conditionals[:,14].long()).view(batchsize, -1)
-  img = conditionals[:,15:15 + pc.IMFEATS]
-  context = torch.cat(annotations + [role, n1, n2, img], 1)
+  toCat = annotations + [role, n1, n2]
+  if not noImg:
+    toCat.append(conditionals[:,15:15 + pc.IMFEATS])
+  context = torch.cat(toCat, 1)
   return context
 
 class TrGanG(nn.Module):
@@ -320,30 +325,36 @@ class GanTrainer(object):
         datasetFileName, pairDataManager, **kwargs)
 
 def redirectOutputAndTrain(args): 
+  pid = os.getpid()
   logFileName = args[2]
   mt.setOutputToFiles(logFileName)
-  logging.getLogger(__name__).info("Training gan in process %d" % os.getpid())
+  logging.getLogger(__name__).info("Training gan in process %d" % pid)
   logging.getLogger(__name__).info("Using gpu %d" % args[3])
   try:
     trainOneGanArgstyle(args)
   except Exception as e:
-    logging.getLogger(__name__).info("Exception while training process: %s" % str(e))
+    print_exc(1000)
+    return e
+  return "Completed process %d" % pid
 
 def trainOneGanArgstyle(args):
   trainOneGan(*args)
+
 # TODO why not kwargs?
 def trainOneGan(
     ganFileName, datasetFileName, logFileName, gpu_id, ganTrainer, 
     parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir, kwargs):
-
-  pairDataManager = dataman.PairDataManager(pairtraindir, featdir)
-  logging.getLogger(__name__).info("Training GAN")
-  logging.getLogger(__name__).info("gpu_id is %d" % gpu_id)
-  logging.getLogger(__name__).info("kwargs is %s" % str(kwargs))
-  ganTrainer.train(
-      datasetFileName, pairDataManager, ganFileName, useScore=useScore,
-      logFileName=logFileName,  gpu_id=gpu_id,
-      trainGraphBn=os.path.splitext(logFileName)[0])
+  measurePerf = kwargs.get("measurePerf", False)
+  logging.getLogger(__name__).info("measurePerf=%s" % measurePerf)
+  with mt.perfmeasure(measurePerf, logging.getLogger(__name__).info) as pm:
+    pairDataManager = dataman.PairDataManager(pairtraindir, featdir)
+    logging.getLogger(__name__).info("Training GAN")
+    logging.getLogger(__name__).info("gpu_id is %d" % gpu_id)
+    logging.getLogger(__name__).info("kwargs is %s" % str(kwargs))
+    ganTrainer.train(
+        datasetFileName, pairDataManager, ganFileName, useScore=useScore,
+        logFileName=logFileName,  gpu_id=gpu_id,
+        trainGraphBn=os.path.splitext(logFileName)[0])
 
 def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
   ganTrainer = GanTrainer(**kwargs)
@@ -372,6 +383,9 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             featdir,
             kwargs))
 
+  if kwargs.get("onlyN", None) and len(taskList) > 0:
+    taskList = taskList[:kwargs["onlyN"]]
+
   if not seqOverride:
     gpuResources = [k for _ in xrange(procsPerGpu) for k in activeGpus]
     pool = multiprocessing.Pool(processes=len(gpuResources), maxtasksperchild=1)
@@ -389,7 +403,11 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
             p.wait(1) # TODO without this, it doesn't work? It should...
             if p.ready():
               ready.append((p, gpu_id))
-              mlog.write("Process ready. p.get()=%s\n" % str(p.get()))
+              mlog.write("Process ready. Getting result...")
+              result = p.get()
+              if isinstance(result, Exception):
+                logging.getLogger(__name__).info("Completed process raised exception: %s" % str(result))
+              mlog.write("Process result: %s" % str(p))
             else:
               notready.append((p, gpu_id))
           mlog.write("Ready: %s\n" % str(ready))
@@ -413,7 +431,10 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
       logging.getLogger(__name__).info("Waiting for remaining tasks to finish.")
       for p, gpu_id in tqdm.tqdm(pending, total=len(pending), desc="Finishing remaining tasks"):
         p.wait()
-        mlog.write("Process ready. p.get()=%s" % str(p.get()))
+        result = p.get()
+        if isinstance(result, Exception):
+          logging.getLogger(__name__).info("Completed process raised exception: %s" % str(result))
+        mlog.write("Process result: %s" % str(p))
 
   else:
     for task in taskList:
@@ -495,40 +516,13 @@ def genDataAndTrainIndividualGans(
   ganLoc = os.path.join(outDirName, "trained_models/")
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
-  # Start a process to monitor the log directory and create graph outputs.
-  logging.getLogger(__name__).info("making graph-creation process")
-  graphmakerOut = os.path.join(logFileDir, "graphmaker.log")
-  with open(graphmakerOut, "w") as gmo:
-    graphmaker = subprocess.Popen(
-        'while true; do ./utils/make_graphs_and_html.sh %s; sleep 10; done' % logFileDir, stdout=gmo, stderr=subprocess.STDOUT, shell=True)
-    try:
-      trainIndividualGans(
-            datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
-            featdir, mapBaseName=datasetFileName, **kwargs)
-    except Exception as e:
-      # This shouldn't happen, since trainIndividualGans() catches exceptions.
-      logging.getLogger(__name__).info("Exception while training gans: %s" % \
-          str(e))
-    logging.getLogger(__name__).info("Terminating graphmaker.")
-    graphmaker.terminate()
-    logging.getLogger(__name__).info("Running graphmaker one last time.")
-    # Can't I run this locally? TODO
-    graphmaker = subprocess.Popen("./utils/make_graphs_and_html.sh %s" % logFileDir, stdout=gmo, stderr=gmo, shell=True)
-    graphmaker.wait()
-    logging.getLogger(__name__).info("Done running graphmaker one last time.")
+  trainIndividualGans(
+          datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
+          featdir, mapBaseName=datasetFileName, **kwargs)
 
 def trainCGAN(ganFileName, *args, **kwargs):
   nets = trainCGANNoFile(*args, ganSaveBasename = ganFileName, **kwargs)
   logging.getLogger(__name__).info("Saving (netD, netG) to %s" % ganFileName)
-  # TODO this seems to take up GPU0? TODO...
-  # TODO try saving parameters instead?
-  # TODO this seems to be eating GPU 0's memory. Try running sequential to make
-  # sure. Also, check process IDs, make sure everything makes sense.
-  # Also, is this memory consumption really problematic? Figure out how to profile.
-  # See what's going on when the full program is run, then narrow down.
-  # Maybe part of the network lives on gpu0?
-  # Check whether gpu0 is ever used with seqOverride=False. Or, which GPU numbers
-  # are relevant, etc.
   torch.save(nets, ganFileName)
 
 class TrainGraphGenerator(object):
@@ -577,37 +571,58 @@ class TrainGraphGenerator(object):
                         "xlabel": "Epoch",
                         "ylabel": "Loss"}]
 
+        self.ablCkpt = None
+        self._iterctr = 0
 
-    def generate(self, netD, netG, epoch, losses, datasetFileName):
+    def generate(
+            self, netD, netG, epoch, iteration, totit, losses, datasetFileName):
         if self._graphbn is None:
             return
-        updates = self._calculateUpdates(netD, netG, epoch, losses, datasetFileName)
-        self._appendValues(epoch, updates)
-        self._makeGraphs()
+        self._iterctr = (self._iterctr + 1)
+        logging.getLogger(__name__).info("Calling generate()")
+        updates = self._calculateUpdates(
+                netD, netG, epoch, iteration, totit, losses, datasetFileName)
+        timestamp = float(iteration) / float(totit) + float(epoch)
+        self._appendValues(timestamp, updates)
+        if mt.shouldDo(self._iterctr, self._kwargs["graphPerIter"]):
+            logging.getLogger(__name__).info("Making graphs")
+            self._makeGraphs()
 
-    # TODO don't call this every time.
-    def _calculateUpdates(self, netD, netG, epoch, losses, datasetFileName):
-        logging.getLogger(__name__).info("Calculating updates")
+    def getAblCkpt(self, datasetFileName):
+        if self.ablCkpt is None:
+            ablkwargs = copy.deepcopy(self._kwargs)
+            ablkwargs["ganSaveBasename"] = None
+            ablkwargs["ignoreCond"] = True
+            ablkwargs["trainGraphBn"] = None
+            self.ablCkpt = CheckpointTrainer(
+                    datasetFileName, self._pdm, **ablkwargs)
+        return self.ablCkpt
+        
+    def _calculateUpdates(
+            self, netD, netG, epoch, iteration, totit, losses, datasetFileName):
         ganTrainer = GanTrainer(**self._kwargs)
         updates = {}
-        # TODO this idea is weird. We train lots of ablations. We also train
-        # them longer than the original network...
-        if epoch % self._kwargs["logPer"] == 0:
+        if mt.shouldDo(iteration, self._kwargs["logPer"]):
+            logging.getLogger(__name__).info("Updating losses: %s" % losses)
             updates.update(losses)
-        if epoch % self._kwargs["updateAblationPer"] == 0:
-            abls = evaluateGANModelAndAblationNoFile((netD, netG), datasetFileName, self._pdm, ganTrainer, epoch, **self._kwargs)
+        if iteration == (totit - 1) and mt.shouldDo(epoch, self._kwargs["updateAblationPer"]):
+            ablCkpt = self.getAblCkpt(datasetFileName)
+            startEpoch = ablCkpt.epoch
+            ablCkpt._kwargs["epochs"] = epoch
+            logging.getLogger(__name__).info("Training ablckpt from %d to %d" %\
+                    (ablCkpt.epoch, ablCkpt._kwargs["epochs"]))
+            ablCkpt.train()
+            abls = evGanAndAbl((netD, netG), (ablCkpt._netD, ablCkpt._netG), datasetFileName, self._pdm, ganTrainer, **self._kwargs)
             updates.update(abls)
-        if epoch % self._kwargs["updateParzenPer"] == 0:
+        if iteration == (totit - 1) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"]):
             probs = evaluateParzenProb(netG, datasetFileName, self._pdm, **self._kwargs)
 #def evaluateParzenProb(netG, ganDataSet, pairtraindir, featdir, **kwargs):
             updates.update(probs)
         return updates
     def _appendValues(self, epoch, valdict):
         argdict = {k: pd.Series([v], index=[epoch]) for k,v in valdict.iteritems()}
-        logging.getLogger(__name__).info("argdict is %s" % str(argdict))
         self._data = self._data.append(pd.DataFrame(argdict))
     def _makeGraphs(self):
-        logging.getLogger(__name__).info("self._data=%s" % str(self._data))
         for gc in self._graphconfig:
             try:
                 self._makeOneGraph(gc)
@@ -632,112 +647,140 @@ class TrainGraphGenerator(object):
         os.rename(temploc, gc["loc"])
 
 def trainCGANNoFile(datasetFileName, pairDataManager, **kwargs):
-  logging.getLogger(__name__).info("Got kwargs %s" % str(kwargs))
-  ganSaveBasename = kwargs.get("ganSaveBasename", None)
-  gpu_id = kwargs["gpu_id"]
-  lr = kwargs["lr"]
-  logPer = kwargs["logPer"]
-  batchSize = kwargs["batchSize"]
-  epochs = kwargs["epochs"]
-  saveDir = kwargs.get("saveDir", None)
-  savePerEpoch = kwargs.get("savePerEpoch", 5)
-  lam = kwargs["lam"]
-  nz = kwargs.get("nz", 0)
-  hiddenSize = kwargs.get("hiddenSize", pc.IMFEATS)
+  trainer = CheckpointTrainer(datasetFileName, pairDataManager, **kwargs)
+  return trainer.train()
 
-  # Set up variables.
-  beta1=0.9999
-  mapBaseName = kwargs.get("mapBaseName", datasetFileName)
-  role2Int = torch.load("%s_role2Int" % mapBaseName)
-  noun2Int = torch.load("%s_noun2Int" % mapBaseName)
-  nVRs = max(role2Int.values()) + 1
-  nWords = max(noun2Int.values()) + 1
-  wESize = 128
-  vrESize = 128
+class CheckpointTrainer(object):
+    def __init__(self, datasetFileName, pairDataManager, **kwargs):
+        self._kwargs = kwargs
+        self.datasetFileName = datasetFileName
+        self.pairDataManager = pairDataManager
+        self.epoch = 0
 
-  gdropout = kwargs.get("gdropout", 0.)
-  depth = kwargs.get("depth", 2)
-  genDepth = kwargs.get("genDepth", 2)
-  decayPer = kwargs.get("decayPer", 10)
-  decayRate = kwargs.get("decayRate", 0.5)
-  dUpdates = kwargs.get("dUpdates", 1)
-  gUpdates = kwargs.get("gUpdates", 1)
-  style = kwargs.get("style", "trgan")
-  disablecgantrainprog = kwargs.get("disablecgantrainprog", True)
-  # Whether to ignore the conditioning variable. Useful for baselines.
-  ignoreCond = kwargs.get("ignoreCond", False) 
-  logFileName = kwargs.get("logFileName", None)
-  trainGraphBn = kwargs.get("trainGraphBn", None)
+        mapBaseName = kwargs.get("mapBaseName", datasetFileName)
+        role2Int = torch.load("%s_role2Int" % mapBaseName)
+        noun2Int = torch.load("%s_noun2Int" % mapBaseName)
+        self._nVRs = max(role2Int.values()) + 1
+        self._nWords = max(noun2Int.values()) + 1
+        self._wESize = 128
+        self._vrESize = 128
 
-  useScore = kwargs.get("useScore", False)
-  # TODO sanitize for unused variables.
-  # Load variables, begin training.
-  logging.getLogger(__name__).info("Loading dataset from %s" % datasetFileName)
-  dataset = torch.load(datasetFileName)
-  dataloader = torch.utils.data.DataLoader(dataset, batch_size=batchSize, shuffle=False, num_workers=0)
-  
-  if style == "gan":
-    netG = NetG(nz, pc.IMFEATS, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize, gdropout).cuda(gpu_id)
-    netD = NetD(pc.IMFEATS, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
-  elif style == "trgan":
-    netG = TrGanG(nz, pc.IMFEATS, hiddenSize, genDepth, nWords, wESize, nVRs, vrESize, gdropout).cuda(gpu_id)
-    netD = TrGanD(pc.IMFEATS, 1, hiddenSize, depth, nWords, wESize, nVRs, vrESize).cuda(gpu_id)
-  else:
-    raise ValueError("Invalid style '%s'" % style)
-  criterion = nn.BCELoss().cuda(gpu_id)
-  l1Criterion = nn.L1Loss().cuda(gpu_id)
-  noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
-  label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
-  optimizerD = optim.SGD(netD.parameters(), lr=lr)
-  optimizerG = optim.SGD(netG.parameters(), lr=lr)
+        self._lr = kwargs["lr"] # This will change during training, potentially.
 
-  if saveDir is not None:
-    if os.path.exists(saveDir):
-      logging.getLogger(__name__).info(
-          "Save directory %s already exists; cowardly exiting..." % saveDir)
-      sys.exit(1)
-    os.makedirs(saveDir)
+        self.makeNets()
 
-  trainGraphGenerator = TrainGraphGenerator(pairDataManager, trainGraphBn, **kwargs)
-  with open(logFileName, "w") as logFile:
-    for epoch in tqdm.tqdm(
-        range(epochs), total=epochs, desc="Epochs completed: ",
-        disable=disablecgantrainprog):
-      for i, data in tqdm.tqdm(
-          enumerate(dataloader, 0), total=len(dataloader),
-          desc="Iterations completed: ", leave=False,
-          disable=disablecgantrainprog):
-        lossdict = networkUpdateStep(
-            netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id,
-            ignoreCond, i, style, optimizerD, optimizerG, criterion, l1Criterion,
-            logPer, lam, epoch, epochs, len(dataloader), logFile, useScore)
+    def makeNets(self):
+        style = self._kwargs.get("style", "trgan")
+        if style == "gan":
+            netG = NetG(
+                    self._kwargs["nz"], pc.IMFEATS, self._kwargs["hiddenSize"],
+                    self._kwargs["genDepth"], self._nWords, self._wESize,
+                    self._nVRs, self._vrESize, self._kwargs["gdropout"]).cuda(
+                            self._kwargs["gpu_id"])
+            netD = NetD(
+                    pc.IMFEATS, 1, self._kwargs["hiddenSize"],
+                    self._kwargs["depth"], self._nWords, self._wESize,
+                    self._nVRs, self._vrESize).cuda(self._kwargs["gpu_id"])
+        elif style == "trgan":
+            netG = TrGanG(
+                    self._kwargs["nz"], pc.IMFEATS, self._kwargs["hiddenSize"],
+                    self._kwargs["genDepth"], self._nWords, self._wESize,
+                    self._nVRs, self._vrESize, self._kwargs["gdropout"]).cuda(
+                            self._kwargs["gpu_id"])
+            netD = TrGanD(
+                    pc.IMFEATS, 1, self._kwargs["hiddenSize"],
+                    self._kwargs["depth"], self._nWords, self._wESize,
+                    self._nVRs, self._vrESize, self._kwargs["trgandnoImg"]) \
+                        .cuda(self._kwargs["gpu_id"])
+        else:
+            raise ValueError("Invalid style '%s'" % style)
+        self._netG = netG
+        self._netD = netD
 
-      # TODO we will want validation data for this as well.
-      trainGraphGenerator.generate(netD, netG, epoch, lossdict, datasetFileName)
-          
-      # save the training files
-      if saveDir is not None and ganSaveBasename is not None and epoch % savePerEpoch == (savePerEpoch - 1):
-        checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganSaveBasename), epoch)
-        logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
-        torch.save((netD, netG), os.path.join(saveDir, checkpointName))
+    def makeSavedir(self):
+        if self._kwargs.get("saveDir", None) is not None:
+          if os.path.exists(saveDir):
+            logging.getLogger(__name__).info(
+                "Save directory %s already exists; cowardly exiting..." % saveDir)
+            sys.exit(1)
+          os.makedirs(saveDir)
 
-      if epoch % decayPer == decayPer - 1:
-        for param_group in optimizerG.param_groups:
-          logging.getLogger(__name__).info("optG: prev rate: %f" % param_group['lr'])
-          param_group['lr'] = param_group['lr'] * decayRate
-          logging.getLogger(__name__).info("optG: new  rate: %f" % param_group['lr'])
-        for param_group in optimizerD.param_groups:
-          logging.getLogger(__name__).info("optD: prev rate: %f" % param_group['lr'])
-          param_group['lr'] = param_group['lr'] * decayRate
-          logging.getLogger(__name__).info("optD: new  rate: %f" % param_group['lr'])
-  return netD, netG
+    def train(self):
+        gpu_id = self._kwargs["gpu_id"]
+        nz = self._kwargs["nz"]
+        logging.getLogger(__name__).info(
+                "Loading dataset from %s" % self.datasetFileName)
+        dataset = torch.load(self.datasetFileName)
+        dataloader = torch.utils.data.DataLoader(dataset, batch_size=self._kwargs["batchSize"], shuffle=False, num_workers=0)
+        criterion = nn.BCELoss().cuda(gpu_id)
+        l1Criterion = nn.L1Loss().cuda(gpu_id)
+        noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
+        label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
+        optimizerD = optim.SGD(self._netD.parameters(), lr=self._lr)
+        optimizerG = optim.SGD(self._netG.parameters(), lr=self._lr)
 
-# TODO turn this into a class.
+        self.makeSavedir()
+
+        trainGraphGenerator = TrainGraphGenerator(
+                self.pairDataManager, self._kwargs.get("trainGraphBn", None),
+                **self._kwargs)
+        totit = len(dataloader)
+        for self.epoch in tqdm.tqdm(
+                range(self.epoch, self._kwargs["epochs"]),
+                total=self._kwargs["epochs"], desc="Epochs completed: ",
+                disable=self._kwargs.get("disablecgantrainprog", True)):
+            for i, data in tqdm.tqdm(
+                    enumerate(dataloader, 0), total=len(dataloader),
+                    desc="Iterations completed: ", leave=False,
+                    disable=self._kwargs.get("disablecgantrainprog", True)):
+                lossdict = networkUpdateStepKwargstyle(
+                        self._netD, self._netG, data, noise, label, optimizerD,
+                        optimizerG, criterion, l1Criterion, **self._kwargs)
+
+                # TODO we will want validation data for this as well.
+                trainGraphGenerator.generate(
+                        self._netD, self._netG, self.epoch, i,
+                        totit, lossdict, self.datasetFileName)
+            # save the training files
+            self.saveCheckpointsIfNeeded()
+
+            self.adjustLearnRate(optimizerD, optimizerG)
+        return self._netD, self._netG
+
+    def adjustLearnRate(self, optimizerD, optimizerG):
+        decayPer = self._kwargs.get("decayPer", None)
+        if decayPer is None:
+            return
+        if self.epoch % decayPer == decayPer - 1:
+            self._lr *= self._kwargs["decayRate"]
+            for param_group in optimizerG.param_groups:
+                logging.getLogger(__name__).info("optG: prev rate: %f" % param_group['lr'])
+                param_group['lr'] = self._lr
+                logging.getLogger(__name__).info("optG: new  rate: %f" % param_group['lr'])
+            for param_group in optimizerD.param_groups:
+              logging.getLogger(__name__).info("optD: prev rate: %f" % param_group['lr'])
+              param_group['lr'] = self._lr
+              logging.getLogger(__name__).info("optD: new  rate: %f" % param_group['lr'])
+    def saveCheckpointsIfNeeded(self):
+        savePerEpoch = self._kwargs.get("savePerEpoch", 5)
+        ganSaveBasename = self._kwargs.get("ganSaveBasename", None)
+        if self._kwargs.get("saveDir", None) is not None and ganSaveBasename is not None and self._epoch % savePerEpoch == (savePerEpoch - 1):
+            checkpointName = "%s_epoch%d.pyt" % (os.path.basename(ganSaveBasename), epoch)
+            logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
+            torch.save((netD, netG), os.path.join(saveDir, checkpointName))
+        
+def networkUpdateStepKwargstyle(
+        netD, netG, data, noise, label, optimizerD, optimizerG, criterion,
+        l1Criterion, **kwargs):
+    return networkUpdateStep(
+            netD, netG, data, kwargs["dUpdates"], kwargs["gUpdates"], noise,
+            label, kwargs["gpu_id"], kwargs.get("ignoreCond", False),
+            optimizerD, optimizerG, criterion, l1Criterion, kwargs["lam"],
+            kwargs["useScore"])
+
 def networkUpdateStep(
-    netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, i, 
-    style, optimizerD, optimizerG, criterion, l1Criterion, logPer, lam, epoch,
-    epochs, nSamples, logFile, useScore):
-  # TODO kwargs...
+    netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, 
+    optimizerD, optimizerG, criterion, l1Criterion, lam, useScore):
   real_label = 1
   fake_label = 0
   # Update D network
@@ -804,16 +847,6 @@ def networkUpdateStep(
     errG_L1.backward()
     optimizerG.step()
 
-  if i % logPer == logPer - 1:
-    logString = \
-        '[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f D(x): %.4f D(G(z)): %.4f / %.4f' \
-              % (epoch, epochs, i, nSamples, errD.data[0], errG.data[0], D_x, D_G_z1, D_G_z2)
-    if logFile:
-      logFile.write(logString + '\n')
-
-    logging.getLogger(__name__).info('[%d/%d][%d/%d] Loss_D: %.4f Loss_G: %.4f Loss_L1: %.4f D(x): %.4f D(G(z)): %.4f / %.4f'
-              % (epoch, epochs, i, nSamples,
-                 errD.data[0], errG.data[0], errG_L1.data[0], D_x, D_G_z1, D_G_z2))
   return {
       "Loss_D": errD.data[0],
       "Loss_G": errG.data[0],
@@ -826,21 +859,24 @@ def evaluateGANModelAndAblation(ganModelFile, *args, **kwargs):
   nets = torch.load(ganModelFile)
   evaluateGANModelAndAblationNoFile(nets, *args, **kwargs)
 
-#def evalGanAndAblationFromCheckpoint(nets, datasetFileName, pairDataManager, ganTrainer, epochOverride, savedAblationFile, 
+def evGanAndAbl(
+        nets, ablnets, datasetFileName, pairDataManager, ganTrainer,
+        **kwargs):
+    logging.getLogger(__name__).info("Evaluating original model")
+    trueLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
+    logging.getLogger(__name__).info("Evaluating ablation model")
+    ablatedLoss = evaluateGANModelNoFile(ablnets, datasetFileName, **kwargs)
+    return {"True Loss": trueLoss, "Ablated Loss": ablatedLoss}
 
-# TODO checkpoint file, etc.
 def evaluateGANModelAndAblationNoFile(nets, datasetFileName, pairDataManager, ganTrainer, epochOverride, **kwargs):
-  logging.getLogger(__name__).info("Evaluating original model")
-  trueLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
   logging.getLogger(__name__).info("Training ablation")
   kwargs["ganSaveBasename"] = None
   kwargs["ignoreCond"] = True
   kwargs["trainGraphBn"] = None
   kwargs["epochs"] = epochOverride
-  nets = ganTrainer.trainNoFile(datasetFileName, pairDataManager, **kwargs)
-  logging.getLogger(__name__).info("Evaluating ablation model")
-  ablatedLoss = evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
-  return {"True Loss": trueLoss, "Ablated Loss": ablatedLoss}
+  ablnets = ganTrainer.trainNoFile(datasetFileName, pairDataManager, **kwargs)
+  return evGanAndAbl(
+      nets, ablnets, datasetFileName, pairDataManager, ganTrainer, **kwargs)
 
 def evaluateGANModel(ganModelFile, datasetFileName, **kwargs):
   nets = torch.load(ganModelFile)

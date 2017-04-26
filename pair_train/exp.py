@@ -120,6 +120,9 @@ class MultiganParameters(object):
                 self._config.featdir]
         self.kwargs = {
                 "epochs": 200,
+                "gUpdates": 1,
+                "dUpdates": 1,
+                "dUpdates": 1,
                 "logPer": 3,
                 "genDepth": 32,
                 "depth": 32,
@@ -128,11 +131,15 @@ class MultiganParameters(object):
                 "lam": 1e-2,
                 "minDataPts": 50,
                 "decayPer": 10,
+                "trgandnoImg": False,
                 "decayRate": 0.7,
                 "batchSize": 32,
+                "hiddenSize": 1024,
                 "gdropout": 0.05,
+                "graphPerIter": 1e10,
                 "useScore": False,
-                "activeGpus": [1, 2, 3],
+                "nz": 0,
+                "activeGpus": [0, 1, 2, 3],
                 "style": "trgan"}
 
 class MultiganTrainer(object):
@@ -160,7 +167,9 @@ def runTestExp():
     mp.kwargs["depth"] = 2
     mp.kwargs["genDepth"] = 2
     mp.kwargs["minDataPts"] = 3
+    mp.kwargs["measurePerf"] = True
     mp.kwargs["procsPerGpu"] = 5
+    mp.kwargs["graphPerIter"] = 1
     mp.kwargs["lr"] = 1e-5
     mp.kwargs["seqOverride"] = False
 
@@ -176,7 +185,7 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
     runner = MultiganExperimentRunner()
-    runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
+    #runner.generateData(DataGenerator(dirconfig, test=True, mode=mode))
 
     #datasetDir = os.path.join(dirconfig.multigandir, "nounpair_data/")
     #pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
@@ -185,13 +194,14 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     mp = MultiganParameters(dirconfig)
     mp.kwargs["epochs"] = 20
     mp.kwargs["logPer"] = 1
-    mp.kwargs["depth"] = 32
-    mp.kwargs["genDepth"] = 32
+    mp.kwargs["depth"] = 2
+    mp.kwargs["genDepth"] = 2
     mp.kwargs["minDataPts"] = 3
     mp.kwargs["lr"] = 1e-4
     mp.kwargs["seqOverride"] = False
     mp.kwargs["nSamples"] = 1000
-    mp.kwargs["activeGpus"] = [1, 2, 3]
+    mp.kwargs["measurePerf"] = True
+    mp.kwargs["activeGpus"] = [0, 1, 2, 3]
     mp.kwargs["updateAblationPer"] = 15
     mp.kwargs["updateParzenPer"] = 10
     mp.kwargs["procsPerGpu"] = 1
@@ -247,15 +257,52 @@ def runLowlearnNice2():
 
     mp = MultiganParameters(dirconfig)
     # TODO too low?
-    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["lr"] = 1e-4
     mp.kwargs["bw_method"] = 2 ** 18
-    mp.kwargs["updateAblationPer"] = 15
-    mp.kwargs["updateParzenPer"] = 10
-    mp.kwargs["nSamples"] = 500 # TODO could be larger...
-    mp.kwargs["depth"] = 16
-    mp.kwargs["genDepth"] = 16
+    mp.kwargs["decayPer"] = 100
+    mp.kwargs["epochs"] = 1000
+    mp.kwargs["updateAblationPer"] = 150
+    mp.kwargs["updateParzenPer"] = 100
+    mp.kwargs["nSamples"] = 50 # TODO could be larger...
+    mp.kwargs["nTestSamples"] = 10 # TODO could be larger...
+    mp.kwargs["procsPerGpu"] = 2 # TODO can be higher
+    mp.kwargs["depth"] = 32 # TODO
+    mp.kwargs["genDepth"] = 32
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 1
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+def runProfile(cautious=True):
+    dirconfig = DirConfig("data/profile/", cautious)
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    #runner.generateData(DataGenerator(dirconfig, test=False))
+
+    mp = MultiganParameters(dirconfig)
+    # TODO too low?
+    mp.kwargs["lr"] = 1e-4
+    mp.kwargs["bw_method"] = 2 ** 18
+    mp.kwargs["decayPer"] = 100
+    mp.kwargs["decayRate"] = 0.7
+    mp.kwargs["epochs"] = 2000
+    mp.kwargs["updateAblationPer"] = 50
+    mp.kwargs["updateParzenPer"] = 50
+    mp.kwargs["nSamples"] = 50 # TODO could be larger...
+    mp.kwargs["nTestSamples"] = 10 # TODO could be larger...
+    mp.kwargs["procsPerGpu"] = 1 # TODO can be higher
+    mp.kwargs["depth"] = 32 # TODO
+    mp.kwargs["genDepth"] = 32
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 1
+    mp.kwargs["seqOverride"] = False
+    mp.kwargs["lam"] = 1e-2
+    mp.kwargs["trgandnoImg"] = True
+    mp.kwargs["minDataPts"] = 50
+    #mp.kwargs["onlyN"] = 10 # TODO remove this
+    mp.kwargs["graphPerIter"] = 300
+    mp.kwargs["measurePerf"] = False
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
