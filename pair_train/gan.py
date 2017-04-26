@@ -535,6 +535,13 @@ class TrainGraphGenerator(object):
             return
         self._graphconfig = [
                 {
+                        "chosen": ["Loss_D", "Loss_G", "Loss_L1"],
+                        "loc": self._graphbn + ".stackloss.jpg",
+                        "title": "Losses",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss",
+                        "maker": pu.makeStackplotDefault},
+                {
                         "chosen": ["Parzen Average"],
                         "loc": self._graphbn + ".parzen.jpg",
                         "title": "Parzen Window Fit",
@@ -641,7 +648,7 @@ class TrainGraphGenerator(object):
         ySeriesIterable = mydata.values.T
         yLegendIterable = chosen
         temploc = mt.pathinsert(gc["loc"], "tmp")
-        pu.makeNPlotDefault(
+        gc.get("maker", pu.makeNPlotDefault)(
                 x, ySeriesIterable, yLegendIterable, gc["title"], gc["xlabel"],
                 gc["ylabel"], temploc, **gc.get("kwargs", {}))
         os.rename(temploc, gc["loc"])

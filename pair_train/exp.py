@@ -197,14 +197,16 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     mp.kwargs["depth"] = 2
     mp.kwargs["genDepth"] = 2
     mp.kwargs["minDataPts"] = 3
+    mp.kwargs["onlyN"] = 3
     mp.kwargs["lr"] = 1e-4
     mp.kwargs["seqOverride"] = False
     mp.kwargs["nSamples"] = 1000
     mp.kwargs["measurePerf"] = True
     mp.kwargs["activeGpus"] = [0, 1, 2, 3]
-    mp.kwargs["updateAblationPer"] = 15
+    mp.kwargs["updateAblationPer"] = 10
     mp.kwargs["updateParzenPer"] = 10
     mp.kwargs["procsPerGpu"] = 1
+    mp.kwargs["graphPerIter"] = 20
 
     runner.generateGanModels(MultiganTrainer(mp))
     """
@@ -301,6 +303,38 @@ def runProfile(cautious=True):
     mp.kwargs["trgandnoImg"] = True
     mp.kwargs["minDataPts"] = 50
     #mp.kwargs["onlyN"] = 10 # TODO remove this
+    mp.kwargs["graphPerIter"] = 300
+    mp.kwargs["measurePerf"] = False
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+def smalltest(cautious=True):
+    dirconfig = DirConfig("data/smalltest2/", cautious)
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    runner.generateData(DataGenerator(dirconfig, test=False))
+
+    mp = MultiganParameters(dirconfig)
+    # TODO too low?
+    mp.kwargs["lr"] = 1
+    mp.kwargs["bw_method"] = 2 ** 18
+    mp.kwargs["decayPer"] = 100
+    mp.kwargs["decayRate"] = 0.7
+    mp.kwargs["epochs"] = 2000
+    mp.kwargs["updateAblationPer"] = 50
+    mp.kwargs["updateParzenPer"] = 50
+    mp.kwargs["nSamples"] = 50 # TODO could be larger...
+    mp.kwargs["nTestSamples"] = 10 # TODO could be larger...
+    mp.kwargs["procsPerGpu"] = 4 # TODO can be higher
+    mp.kwargs["depth"] = 4 # TODO
+    mp.kwargs["genDepth"] = 4
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 1
+    mp.kwargs["seqOverride"] = False
+    mp.kwargs["lam"] = 1
+    mp.kwargs["trgandnoImg"] = True
+    mp.kwargs["minDataPts"] = 50
     mp.kwargs["graphPerIter"] = 300
     mp.kwargs["measurePerf"] = False
     runner.generateGanModels(MultiganTrainer(mp))

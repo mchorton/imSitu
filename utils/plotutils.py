@@ -97,20 +97,29 @@ def makeNPlotDefault(
     makeNPlot(x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel,
     xscale, yscale, loc, fontsize, labelsize, tickwidth, ticklength)
 
-def makeNPlot(x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, xscale, yscale, loc, fontsize, labelsize, tickwidth, ticklength):
+def makeStackplotDefault(
+        x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, loc,
+        xscale="linear", yscale="linear", fontsize=10, labelsize=10, 
+        tickwidth=1, ticklength=1):
+    makeStackplot(
+            x, ySeriesIterable, yLegendIterable, title, xlabel, ylabel, xscale,
+            yscale, loc, fontsize, labelsize, tickwidth, ticklength)
 
+def makeStackplot(x, ySeriesIterable, yLegendIterable, *args):
+    plots = plt.stackplot(x, *ySeriesIterable, labels=yLegendIterable)
+    _formatAndSave(*args)
+
+def makeNPlot(x, ySeriesIterable, yLegendIterable, *args):
+  labelsize = args[7] # womp womp
   plots = []
   for ySeries in ySeriesIterable:
     myplot, = plt.plot(x, ySeries)
     plots.append(myplot)
   plt.legend(plots, yLegendIterable, fontsize=labelsize)
-  
-  """
-  trainPlot, = plt.plot(x, y, 'r.') 
-  validPlot, = plt.plot(x, z, 'b.')
-  plt.legend([trainPlot, validPlot], [ylegend, zlegend], fontsize=labelsize)
-  """
+  _formatAndSave(*args)
 
+def _formatAndSave(title, xlabel, ylabel, xscale,
+    yscale, loc, fontsize, labelsize, tickwidth, ticklength):
   plt.title(title, fontsize=fontsize)
   plt.ylabel(ylabel, fontsize=fontsize)
   plt.xlabel(xlabel, fontsize=fontsize)
