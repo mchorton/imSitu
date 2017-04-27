@@ -199,7 +199,7 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     mp.kwargs["minDataPts"] = 3
     mp.kwargs["onlyN"] = 3
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["seqOverride"] = False
+    mp.kwargs["seqOverride"] = True
     mp.kwargs["nSamples"] = 1000
     mp.kwargs["measurePerf"] = True
     mp.kwargs["activeGpus"] = [0, 1, 2, 3]
@@ -313,11 +313,11 @@ def smalltest(cautious=True):
 
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
-    runner.generateData(DataGenerator(dirconfig, test=False))
+    #runner.generateData(DataGenerator(dirconfig, test=False))
 
     mp = MultiganParameters(dirconfig)
     # TODO too low?
-    mp.kwargs["lr"] = 1
+    mp.kwargs["lr"] = 1e-3
     mp.kwargs["bw_method"] = 2 ** 18
     mp.kwargs["decayPer"] = 100
     mp.kwargs["decayRate"] = 0.7

@@ -619,7 +619,7 @@ class TrainGraphGenerator(object):
             logging.getLogger(__name__).info("Training ablckpt from %d to %d" %\
                     (ablCkpt.epoch, ablCkpt._kwargs["epochs"]))
             ablCkpt.train()
-            abls = evGanAndAbl((netD, netG), (ablCkpt._netD, ablCkpt._netG), datasetFileName, self._pdm, ganTrainer, **self._kwargs)
+            abls = evGanAndAbl((netD, netG), (ablCkpt.netD, ablCkpt.netG), datasetFileName, self._pdm, ganTrainer, **self._kwargs)
             updates.update(abls)
         if iteration == (totit - 1) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"]):
             probs = evaluateParzenProb(netG, datasetFileName, self._pdm, **self._kwargs)
@@ -673,9 +673,21 @@ class CheckpointTrainer(object):
         self._vrESize = 128
 
         self._lr = kwargs["lr"] # This will change during training, potentially.
+        netD, netG = self.makeNets()
 
-        self.makeNets()
+        self.trainGraphGenerator = TrainGraphGenerator(
+                self.pairDataManager, self._kwargs.get("trainGraphBn", None),
+                **self._kwargs)
 
+        self.updater = UpdateStepper(
+                self.pairDataManager, netD, netG, **self._kwargs)
+
+    @property
+    def netD(self):
+        return self.updater.netD
+    @property
+    def netG(self):
+        return self.updater.netG
     def makeNets(self):
         style = self._kwargs.get("style", "trgan")
         if style == "gan":
@@ -701,8 +713,7 @@ class CheckpointTrainer(object):
                         .cuda(self._kwargs["gpu_id"])
         else:
             raise ValueError("Invalid style '%s'" % style)
-        self._netG = netG
-        self._netD = netD
+        return netD, netG
 
     def makeSavedir(self):
         if self._kwargs.get("saveDir", None) is not None:
@@ -713,24 +724,12 @@ class CheckpointTrainer(object):
           os.makedirs(saveDir)
 
     def train(self):
-        gpu_id = self._kwargs["gpu_id"]
-        nz = self._kwargs["nz"]
         logging.getLogger(__name__).info(
                 "Loading dataset from %s" % self.datasetFileName)
         dataset = torch.load(self.datasetFileName)
         dataloader = torch.utils.data.DataLoader(dataset, batch_size=self._kwargs["batchSize"], shuffle=False, num_workers=0)
-        criterion = nn.BCELoss().cuda(gpu_id)
-        l1Criterion = nn.L1Loss().cuda(gpu_id)
-        noise = ag.Variable(torch.FloatTensor(dataloader.batch_size, nz).cuda(gpu_id))
-        label = ag.Variable(torch.FloatTensor(dataloader.batch_size).cuda(gpu_id))
-        optimizerD = optim.SGD(self._netD.parameters(), lr=self._lr)
-        optimizerG = optim.SGD(self._netG.parameters(), lr=self._lr)
-
         self.makeSavedir()
 
-        trainGraphGenerator = TrainGraphGenerator(
-                self.pairDataManager, self._kwargs.get("trainGraphBn", None),
-                **self._kwargs)
         totit = len(dataloader)
         for self.epoch in tqdm.tqdm(
                 range(self.epoch, self._kwargs["epochs"]),
@@ -740,31 +739,31 @@ class CheckpointTrainer(object):
                     enumerate(dataloader, 0), total=len(dataloader),
                     desc="Iterations completed: ", leave=False,
                     disable=self._kwargs.get("disablecgantrainprog", True)):
-                lossdict = networkUpdateStepKwargstyle(
-                        self._netD, self._netG, data, noise, label, optimizerD,
-                        optimizerG, criterion, l1Criterion, **self._kwargs)
+
+
+                lossdict = self.updater.networkUpdateStep(data)
 
                 # TODO we will want validation data for this as well.
-                trainGraphGenerator.generate(
-                        self._netD, self._netG, self.epoch, i,
+                self.trainGraphGenerator.generate(
+                        self.netD, self.netG, self.epoch, i,
                         totit, lossdict, self.datasetFileName)
             # save the training files
             self.saveCheckpointsIfNeeded()
 
-            self.adjustLearnRate(optimizerD, optimizerG)
-        return self._netD, self._netG
+            self.adjustLearnRate()
+        return self.netD, self.netG
 
-    def adjustLearnRate(self, optimizerD, optimizerG):
+    def adjustLearnRate(self):
         decayPer = self._kwargs.get("decayPer", None)
         if decayPer is None:
             return
-        if self.epoch % decayPer == decayPer - 1:
+        if mt.shouldDo(self.epoch, decayPer):
             self._lr *= self._kwargs["decayRate"]
-            for param_group in optimizerG.param_groups:
+            for param_group in self.updater._optimizerG.param_groups:
                 logging.getLogger(__name__).info("optG: prev rate: %f" % param_group['lr'])
                 param_group['lr'] = self._lr
                 logging.getLogger(__name__).info("optG: new  rate: %f" % param_group['lr'])
-            for param_group in optimizerD.param_groups:
+            for param_group in self.updater._optimizerD.param_groups:
               logging.getLogger(__name__).info("optD: prev rate: %f" % param_group['lr'])
               param_group['lr'] = self._lr
               logging.getLogger(__name__).info("optD: new  rate: %f" % param_group['lr'])
@@ -776,91 +775,118 @@ class CheckpointTrainer(object):
             logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
             torch.save((netD, netG), os.path.join(saveDir, checkpointName))
         
-def networkUpdateStepKwargstyle(
-        netD, netG, data, noise, label, optimizerD, optimizerG, criterion,
-        l1Criterion, **kwargs):
-    return networkUpdateStep(
-            netD, netG, data, kwargs["dUpdates"], kwargs["gUpdates"], noise,
-            label, kwargs["gpu_id"], kwargs.get("ignoreCond", False),
-            optimizerD, optimizerG, criterion, l1Criterion, kwargs["lam"],
-            kwargs["useScore"])
+# TODO maybe the networks should live in here too? Then, anything could be
+# trained according to our framework, without the CheckpointTrainer knowing
+# the details?
+class UpdateStepper(object):
+    REAL_LABEL = 1
+    FAKE_LABEL = 0
+    def __init__(self, pairDataManager, netD, netG, **kwargs):
+        self._kwargs = kwargs
+        self._pdm = pairDataManager
+        self.netD = netD
+        self.netG = netG
 
-def networkUpdateStep(
-    netD, netG, data, dUpdates, gUpdates, noise, label, gpu_id, ignoreCond, 
-    optimizerD, optimizerG, criterion, l1Criterion, lam, useScore):
-  real_label = 1
-  fake_label = 0
-  # Update D network
-  for _ in range(dUpdates):
-    netD.zero_grad()
-    conditional, realImageAndScore = data
-    conditional, realImageAndScore = ag.Variable(conditional.cuda(gpu_id)), \
-        ag.Variable(realImageAndScore.cuda(gpu_id))
+        # TODO update the learning rate here!
 
-    # get scores from realImageAndScore
-    scores = realImageAndScore[:,pc.IMFEATS]
-    if not useScore:
-      scores.data.fill_(1)
-    output = netD(conditional, realImageAndScore, True)
-    label.data.fill_(real_label)
-    errD_real = criterion(
-        torch.mul(output.view(-1), scores),
-        torch.mul(label[:len(output)], scores))
-    errD_real.backward()
-    # D_x is how many of the images (all of which were real) were identified as
-    # real.
-    D_x = output.data.mean()
+        self._noise = ag.Variable(torch.FloatTensor(self._kwargs["batchSize"], self._kwargs["nz"]).cuda(self._kwargs["gpu_id"]))
+        self._label = ag.Variable(torch.FloatTensor(self._kwargs["batchSize"]).cuda(self._kwargs["gpu_id"]))
+        self._optimizerD = optim.SGD(
+                self.netD.parameters(), lr=self._kwargs["lr"])
+        self._optimizerG = optim.SGD(
+                self.netG.parameters(), lr=self._kwargs["lr"])
 
-    noise.data.normal_(0, 1)
-    fake = netG(
-        noise[:len(realImageAndScore)], conditional, True,
-        ignoreCond=ignoreCond)
-    label.data.fill_(fake_label)
-    output = netD(conditional, fake, True)
-    errD_fake = criterion(
-        torch.mul(output, scores),
-        torch.mul(label[:len(output)], scores))
-    errD_fake.backward()
-    # D_G_z1 is how many of the images (all of which were fake) were identified 
-    # as real.
-    D_G_z1 = output.data.mean()
-    errD = errD_real + errD_fake
-    optimizerD.step()
+        # TODO
+        self._criterion = nn.MSELoss().cuda(self._kwargs["gpu_id"])
+        self._l1Criterion = nn.L1Loss().cuda(self._kwargs["gpu_id"])
 
-  for _ in range(gUpdates):
-    # Update G network
-    noise.data.normal_(0, 1)
-    netG.zero_grad()
-    fake = netG(
-        noise[:len(realImageAndScore)], conditional, True,
-        ignoreCond=ignoreCond)
-    label.data.fill_(real_label)
-    output = netD(conditional, fake, True)
-    errG = criterion(
-        torch.mul(output, scores),
-        torch.mul(label[:len(output)], scores))
-    errG.backward()
-    D_G_z2 = output.data.mean()
-    # D_G_z2 is how many of the images (all of which were fake) were identified
-    # as real, AFTER the discriminator update.
+    def calcCriterion(self, output, label, scores):
+        loss = self._criterion(output.view(-1), label[:len(output)])
+        if self._kwargs["useScore"]:
+            loss = torch.mul(loss, scores)
+        return loss
+    def updateD(self, data):
+        self.netD.zero_grad()
+        # TODO is this the most efficient way to get data onto the GPU?
+        conditional, realImageAndScore = data
+        conditional = ag.Variable(conditional.cuda(self._kwargs["gpu_id"]))
+        realImageAndScore = ag.Variable(realImageAndScore.cuda(self._kwargs["gpu_id"]))
+        _, scores = self._pdm.decodeFeatsAndScore(realImageAndScore)
 
-    fake = netG(
-        noise[:len(realImageAndScore)], conditional, True,
-        ignoreCond=ignoreCond)
-    resizescores = scores.contiguous().view(-1, 1).expand(fake.size())
-    errG_L1 = l1Criterion(
-        torch.mul(torch.mul(fake, lam), resizescores),
-        torch.mul(torch.mul(realImageAndScore[:,:1024], lam), resizescores))
-    errG_L1.backward()
-    optimizerG.step()
+        output = self.netD(conditional, realImageAndScore, train=True)
+        self._label.data.fill_(self.REAL_LABEL)
+        errD_real = self.calcCriterion(output, self._label, scores)
+        errD_real.backward()
+        # D_x is how many of the images (all of which were real) were identified
+        # as real.
+        D_x = output.data.mean()
 
-  return {
-      "Loss_D": errD.data[0],
-      "Loss_G": errG.data[0],
-      "Loss_L1": errG_L1.data[0],
-      "D(x)": D_x,
-      "D_G_z1": D_G_z1,
-      "D_G_z2": D_G_z2}
+        self._noise.data.normal_(0, 1)
+        fake = self.netG(
+                self._noise[:len(realImageAndScore)], conditional, train=True,
+                ignoreCond=self._kwargs.get("ignoreCond", False))
+        self._label.data.fill_(self.FAKE_LABEL)
+        output = self.netD(conditional, fake, train=True)
+        errD_fake = self.calcCriterion(output, self._label, scores)
+        errD_fake.backward()
+        # D_G_z1 is how many of the images (all of which were fake) were 
+        # identified as real.
+        D_G_z1 = output.data.mean()
+        errD = errD_real + errD_fake
+        self._optimizerD.step()
+        # TODO should I return a different value, or an average?
+        return {
+            "Loss_D": errD.data[0],
+            "Loss_D_real": errD_real.data[0],
+            "Loss_D_fake": errD_fake.data[0],
+            "D_G_z1": D_G_z1,
+            "D(x)": D_x}
+    def calcL1Loss(self, fakeIm, realIm, scores):
+        l1loss = torch.mul(
+                self._l1Criterion(fakeIm, realIm), self._kwargs["lam"])
+        if self._kwargs["useScore"]:
+            resizescores = scores.contiguous().view(-1, 1).expand(fake.size())
+            l1loss = torch.mul(l1loss, resizescores)
+        return l1loss
+    def updateG(self, data):
+        # Update G network
+        self.netG.zero_grad()
+        conditional, realImageAndScore = data
+        conditional = ag.Variable(conditional.cuda(self._kwargs["gpu_id"]))
+        realImageAndScore = ag.Variable(realImageAndScore.cuda(self._kwargs["gpu_id"]))
+        realIm, scores = self._pdm.decodeFeatsAndScore(realImageAndScore)
+
+        self._noise.data.normal_(0, 1)
+        fake = self.netG(
+                self._noise[:len(realImageAndScore)], conditional, train=True,
+                ignoreCond=self._kwargs.get("ignoreCond"))
+        self._label.data.fill_(self.REAL_LABEL)
+        output = self.netD(conditional, fake, train=True)
+        errG = self.calcCriterion(output, self._label, scores)
+        errG.backward()
+        # D_G_z2 is how many of the images (all of which were fake) were
+        # identified as real, AFTER the discriminator update.
+        D_G_z2 = output.data.mean()
+
+        fake = self.netG(
+                self._noise[:len(realImageAndScore)], conditional, train=True,
+                ignoreCond=self._kwargs.get("ignoreCond"))
+        errG_L1 = self.calcL1Loss(fake, realIm, scores)
+        errG_L1.backward()
+        self._optimizerG.step()
+        return {
+                "Loss_G": errG.data[0],
+                "Loss_L1": errG_L1.data[0],
+                "D_G_z2": D_G_z2}
+        
+    def networkUpdateStep(self, data):
+      ret = {}
+      # Update D network
+      for _ in range(self._kwargs["dUpdates"]):
+        ret.update(self.updateD(data))
+      for _ in range(self._kwargs["gUpdates"]):
+        ret.update(self.updateG(data))
+      return ret
 
 def evaluateGANModelAndAblation(ganModelFile, *args, **kwargs):
   nets = torch.load(ganModelFile)
@@ -890,7 +916,7 @@ def evaluateGANModel(ganModelFile, datasetFileName, **kwargs):
   return evaluateGANModelNoFile(nets, datasetFileName, **kwargs)
 
 def evaluateGANModelNoFile(nets, datasetFileName, **kwargs):
-  logging.getLogger(__name__).info("Evaluatig gan model: kwargs=%s" % str(kwargs))
+  logging.getLogger(__name__).info("Evaluating gan model: kwargs=%s" % str(kwargs))
   gpu_id = kwargs["gpu_id"]
   useScore = kwargs["useScore"]
   disableevganprog = kwargs.get("disableevganprog", True)
