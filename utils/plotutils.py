@@ -106,7 +106,9 @@ def makeStackplotDefault(
             yscale, loc, fontsize, labelsize, tickwidth, ticklength)
 
 def makeStackplot(x, ySeriesIterable, yLegendIterable, *args):
+    labelsize = args[7] # womp womp
     plots = plt.stackplot(x, *ySeriesIterable, labels=yLegendIterable)
+    plt.legend(plots, yLegendIterable, fontsize=labelsize)
     _formatAndSave(*args)
 
 def makeNPlot(x, ySeriesIterable, yLegendIterable, *args):

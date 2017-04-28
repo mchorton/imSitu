@@ -310,30 +310,35 @@ class TrGanG(nn.Module):
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(ganFileName, datasetFileName)
 
+# Can I get rid of this in favor of CheckpointTrainer? TODO
 class GanTrainer(object):
   def __init__(self, **kwargs):
     self.kwargs = kwargs
-  def train(self, datasetFileName, pairDataManager, ganFileName, **moreKwargs):
+  def train(self, datasetFileName, devDatasetFileName, pairDataManager, ganFileName, **moreKwargs):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
     trainCGAN(
-        ganFileName, datasetFileName, pairDataManager, **kwargs)
-  def trainNoFile(self, datasetFileName, pairDataManager, **moreKwargs):
+        ganFileName, datasetFileName, devDatasetFileName, pairDataManager,
+        **kwargs)
+  def trainNoFile(self, datasetFileName, devDatasetFileName, pairDataManager, **moreKwargs):
     kwargs = copy.deepcopy(self.kwargs)
     kwargs.update(moreKwargs)
     return trainCGANNoFile(
-        datasetFileName, pairDataManager, **kwargs)
+        datasetFileName, devDatasetFileName, pairDataManager, **kwargs)
 
 def redirectOutputAndTrain(args): 
   pid = os.getpid()
-  logFileName = args[2]
+  logFileName = args[3]
   mt.setOutputToFiles(logFileName)
   logging.getLogger(__name__).info("Training gan in process %d" % pid)
-  logging.getLogger(__name__).info("Using gpu %d" % args[3])
+  logging.getLogger(__name__).info("Using gpu %d" % args[4])
   try:
+    logging.getLogger(__name__).info("Training...")
     trainOneGanArgstyle(args)
   except Exception as e:
+    logging.getLogger(__name__).info("Printing Exception...")
     print_exc(1000)
+    logging.getLogger(__name__).info("Done Printing Exception...")
     return e
   return "Completed process %d" % pid
 
@@ -342,8 +347,9 @@ def trainOneGanArgstyle(args):
 
 # TODO why not kwargs?
 def trainOneGan(
-    ganFileName, datasetFileName, logFileName, gpu_id, ganTrainer, 
-    parzenDirectory, ablationDirectory, useScore, pairtraindir, featdir, kwargs):
+    ganFileName, datasetFileName, devDatasetFileName, logFileName, gpu_id,
+    ganTrainer, parzenDirectory, ablationDirectory, useScore, pairtraindir,
+    featdir, kwargs):
   measurePerf = kwargs.get("measurePerf", False)
   logging.getLogger(__name__).info("measurePerf=%s" % measurePerf)
   with mt.perfmeasure(measurePerf, logging.getLogger(__name__).info) as pm:
@@ -352,11 +358,11 @@ def trainOneGan(
     logging.getLogger(__name__).info("gpu_id is %d" % gpu_id)
     logging.getLogger(__name__).info("kwargs is %s" % str(kwargs))
     ganTrainer.train(
-        datasetFileName, pairDataManager, ganFileName, useScore=useScore,
-        logFileName=logFileName,  gpu_id=gpu_id,
+        datasetFileName, devDatasetFileName, pairDataManager, ganFileName,
+        useScore=useScore, logFileName=logFileName,  gpu_id=gpu_id,
         trainGraphBn=os.path.splitext(logFileName)[0])
 
-def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
+def trainIndividualGans(datasetDirectory, devsetDirectory, ganDirectory, logFileDirectory, parzenDirectory, ablationDirectory, pairtraindir, featdir, **kwargs):
   ganTrainer = GanTrainer(**kwargs)
   procsPerGpu = kwargs.get("procsPerGpu", 3)
   seqOverride = kwargs.get("seqOverride", False)
@@ -372,6 +378,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
                 ganDirectory, 
                 filenameNoExt + ".gan"),
             os.path.join(datasetDirectory, filename),
+            os.path.join(devsetDirectory, filename),
             os.path.join(
                 logFileDirectory, filenameNoExt + ".log"),
             gpu_id,
@@ -407,7 +414,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
               result = p.get()
               if isinstance(result, Exception):
                 logging.getLogger(__name__).info("Completed process raised exception: %s" % str(result))
-              mlog.write("Process result: %s" % str(p))
+              mlog.write("Process result: %s" % str(result))
             else:
               notready.append((p, gpu_id))
           mlog.write("Ready: %s\n" % str(ready))
@@ -422,7 +429,7 @@ def trainIndividualGans(datasetDirectory, ganDirectory, logFileDirectory, parzen
         mlog.write("Resources is %s\n" % gpuResources)
         gpu_id = gpuResources.pop()
         t = list(task)
-        t[3] = gpu_id # TODO use kwargs.
+        t[4] = gpu_id # TODO use kwargs.
         task = tuple(t)
         mlog.write("Starting task on gpu_id=%d\n" % gpu_id)
         mlog.write("task is %s\n" % str(task))
@@ -502,8 +509,11 @@ def genDataAndTrainIndividualGans(
   with open(os.path.join(logFileDir, "args.txt"), "w+") as argfile:
     argfile.write("ARGS=%s\nKWARGS=%s" % (str((outDirName, datasetFileName, logFileDir)), str(kwargs)))
   datasetDir = os.path.join(outDirName, "nounpair_data/")
+  devsetDir = os.path.join(outDirName, "nounpair_data_dev/")
   pdm = dataman.PairDataManager(pairtraindir, featdir)
-  dataman.shardAndSave(pdm, datasetDir, **kwargs)
+  if not kwargs.get("skipShardAndSave", False):
+    dataman.shardAndSave(pdm, datasetDir, "train", **kwargs)
+    dataman.shardAndSave(pdm, devsetDir, "dev", **kwargs)
 
   parzenDir = os.path.join(outDirName, "parzen_fits/")
   ablationDir = os.path.join(outDirName, "ablations/")
@@ -517,7 +527,7 @@ def genDataAndTrainIndividualGans(
   if not os.path.exists(ganLoc):
     os.makedirs(ganLoc)
   trainIndividualGans(
-          datasetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
+          datasetDir, devsetDir, ganLoc, logFileDir, parzenDir, ablationDir, pairtraindir,
           featdir, mapBaseName=datasetFileName, **kwargs)
 
 def trainCGAN(ganFileName, *args, **kwargs):
@@ -527,7 +537,7 @@ def trainCGAN(ganFileName, *args, **kwargs):
 
 class TrainGraphGenerator(object):
     def __init__(self, pairDataManager, graphbn, **kwargs):
-        self._kwargs = kwargs # TODO
+        self._kwargs = kwargs
         self._graphbn = graphbn
         self._data = pd.DataFrame()
         self._pdm = pairDataManager
@@ -542,21 +552,34 @@ class TrainGraphGenerator(object):
                         "ylabel": "Loss",
                         "maker": pu.makeStackplotDefault},
                 {
+                        "chosen": ["Dev Loss_D", "Dev Loss_G", "Dev Loss_L1"],
+                        "loc": self._graphbn + ".valloss.jpg",
+                        "title": "Losses",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss",
+                        "maker": pu.makeStackplotDefault},
+                {
                         "chosen": ["Parzen Average"],
                         "loc": self._graphbn + ".parzen.jpg",
                         "title": "Parzen Window Fit",
                         "xlabel": "Epoch",
                         "ylabel": "Log Prob"},
                 {
-                        "chosen": ["Loss_D", "Loss_G"],
-                        "loc": self._graphbn + ".dgloss.jpg",
-                        "title": "Disc / Gen Loss",
+                        "chosen": ["Dev Parzen Average"],
+                        "loc": self._graphbn + ".devparzen.jpg",
+                        "title": "Dev Parzen Window Fit",
                         "xlabel": "Epoch",
-                        "ylabel": "Loss"},
+                        "ylabel": "Log Prob"},
                 {
                         "chosen": ["D(x)", "D_G_z1"],
                         "loc": self._graphbn + ".predictions.jpg",
                         "title": "Disc. Prediction on Real / Fake",
+                        "xlabel": "Epoch",
+                        "ylabel": "Prediction (1=Real, 0=Fake)"},
+                {
+                        "chosen": ["Dev D(x)", "Dev D_G_z1"],
+                        "loc": self._graphbn + ".valpredictions.jpg",
+                        "title": "Dev Set Prediction on Real / Fake",
                         "xlabel": "Epoch",
                         "ylabel": "Prediction (1=Real, 0=Fake)"},
                 {
@@ -572,8 +595,20 @@ class TrainGraphGenerator(object):
                         "xlabel": "Epoch",
                         "ylabel": "Loss"},
                 {
+                        "chosen": ["Dev Loss_L1"],
+                        "loc": self._graphbn + ".devl1loss.jpg",
+                        "title": "Dev L1 Loss",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss"},
+                {
                         "chosen": ["True Loss", "Ablated Loss"],
                         "loc": self._graphbn + ".abl.jpg",
+                        "title": "Ablation Losses",
+                        "xlabel": "Epoch",
+                        "ylabel": "Loss"},
+                {
+                        "chosen": ["Val True Loss", "Val Ablated Loss"],
+                        "loc": self._graphbn + ".devabl.jpg",
                         "title": "Ablation Losses",
                         "xlabel": "Epoch",
                         "ylabel": "Loss"}]
@@ -581,15 +616,36 @@ class TrainGraphGenerator(object):
         self.ablCkpt = None
         self._iterctr = 0
 
-    def generate(
-            self, netD, netG, epoch, iteration, totit, losses, datasetFileName):
+    def logInitialState(
+            self, dataset_filename, devdataset_filename, totit, stepper):
         if self._graphbn is None:
             return
-        self._iterctr = (self._iterctr + 1)
+        updates = {}
+        logging.getLogger(__name__).info("Getting initial state")
+        self._iterctr = -1 # generate() will increase this to its proper value 0
+        logging.getLogger(__name__).info("Getting training losses")
+        dataset = torch.load(dataset_filename)
+        updates.update(stepper.getLoss(dataset, ""))
+        # pretending totit is 0 to trigger certain updates.
+        self.generate(
+                stepper, 0, 0, 0, updates, dataset_filename,
+                devdataset_filename)
+        
+    def generate(
+            self, stepper, epoch, iteration, totit, losses, datasetFileName,
+            devdataset_filename):
+            # iteration - the number of iterations completed this epoch (never
+            # will be '0', at most will be totit)
+        if self._graphbn is None:
+            return
+        self._iterctr += 1
         logging.getLogger(__name__).info("Calling generate()")
         updates = self._calculateUpdates(
-                netD, netG, epoch, iteration, totit, losses, datasetFileName)
-        timestamp = float(iteration) / float(totit) + float(epoch)
+                stepper, epoch, iteration, totit, losses, datasetFileName,
+                devdataset_filename)
+
+        frac = float(iteration) / float(totit) if totit is not 0 else 0
+        timestamp = frac + float(epoch)
         self._appendValues(timestamp, updates)
         if mt.shouldDo(self._iterctr, self._kwargs["graphPerIter"]):
             logging.getLogger(__name__).info("Making graphs")
@@ -602,29 +658,48 @@ class TrainGraphGenerator(object):
             ablkwargs["ignoreCond"] = True
             ablkwargs["trainGraphBn"] = None
             self.ablCkpt = CheckpointTrainer(
-                    datasetFileName, self._pdm, **ablkwargs)
+                    datasetFileName, None, self._pdm, **ablkwargs)
         return self.ablCkpt
         
     def _calculateUpdates(
-            self, netD, netG, epoch, iteration, totit, losses, datasetFileName):
+            self, stepper, epoch, iteration, totit, losses, datasetFileName,
+            devdataset_filename):
         ganTrainer = GanTrainer(**self._kwargs)
         updates = {}
-        if mt.shouldDo(iteration, self._kwargs["logPer"]):
+        if mt.shouldDo(self._iterctr, self._kwargs["logPer"]):
+            # TODO losses is goofy
             logging.getLogger(__name__).info("Updating losses: %s" % losses)
             updates.update(losses)
-        if iteration == (totit - 1) and mt.shouldDo(epoch, self._kwargs["updateAblationPer"]):
+        if mt.shouldDo(self._iterctr, self._kwargs["logDevPer"]):
+            logging.getLogger(__name__).info("Getting devset losses")
+            dataset = torch.load(devdataset_filename)
+            updates.update(stepper.getLoss(dataset, "Dev "))
+        if iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateAblationPer"]):
             ablCkpt = self.getAblCkpt(datasetFileName)
             startEpoch = ablCkpt.epoch
             ablCkpt._kwargs["epochs"] = epoch
             logging.getLogger(__name__).info("Training ablckpt from %d to %d" %\
                     (ablCkpt.epoch, ablCkpt._kwargs["epochs"]))
             ablCkpt.train()
-            abls = evGanAndAbl((netD, netG), (ablCkpt.netD, ablCkpt.netG), datasetFileName, self._pdm, ganTrainer, **self._kwargs)
+
+            abls = evGanAndAbl((stepper.netD, stepper.netG), (ablCkpt.netD, ablCkpt.netG), datasetFileName, self._pdm, ganTrainer, **self._kwargs)
             updates.update(abls)
-        if iteration == (totit - 1) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"]):
-            probs = evaluateParzenProb(netG, datasetFileName, self._pdm, **self._kwargs)
+            abls = evGanAndAbl(
+                    (stepper.netD, stepper.netG), (ablCkpt.netD, ablCkpt.netG),
+                    devdataset_filename, self._pdm, ganTrainer, **self._kwargs)
+            for k,v in abls.iteritems():
+                updates["Dev " + k] = v
+
+        if iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"]):
+            probs = evaluateParzenProb(
+                    stepper.netG, datasetFileName, self._pdm, **self._kwargs)
 #def evaluateParzenProb(netG, ganDataSet, pairtraindir, featdir, **kwargs):
             updates.update(probs)
+            probs = evaluateParzenProb(
+                    stepper.netG, devdataset_filename, self._pdm,
+                    **self._kwargs)
+            for k,v in probs.iteritems():
+                updates["Dev " + k] = v
         return updates
     def _appendValues(self, epoch, valdict):
         argdict = {k: pd.Series([v], index=[epoch]) for k,v in valdict.iteritems()}
@@ -653,14 +728,20 @@ class TrainGraphGenerator(object):
                 gc["ylabel"], temploc, **gc.get("kwargs", {}))
         os.rename(temploc, gc["loc"])
 
-def trainCGANNoFile(datasetFileName, pairDataManager, **kwargs):
-  trainer = CheckpointTrainer(datasetFileName, pairDataManager, **kwargs)
+def trainCGANNoFile(
+        datasetFileName, devDatasetFileName, pairDataManager, **kwargs):
+  trainer = CheckpointTrainer(
+          datasetFileName, devDatasetFileName, 
+          pairDataManager, **kwargs)
   return trainer.train()
 
 class CheckpointTrainer(object):
-    def __init__(self, datasetFileName, pairDataManager, **kwargs):
+    def __init__(
+            self, datasetFileName, devDatasetFileName, pairDataManager,
+            **kwargs):
         self._kwargs = kwargs
         self.datasetFileName = datasetFileName
+        self.devDatasetFileName = devDatasetFileName
         self.pairDataManager = pairDataManager
         self.epoch = 0
 
@@ -731,6 +812,10 @@ class CheckpointTrainer(object):
         self.makeSavedir()
 
         totit = len(dataloader)
+        if self.epoch == 0:
+            self.trainGraphGenerator.logInitialState(
+                    self.datasetFileName, self.devDatasetFileName, totit, 
+                    self.updater)
         for self.epoch in tqdm.tqdm(
                 range(self.epoch, self._kwargs["epochs"]),
                 total=self._kwargs["epochs"], desc="Epochs completed: ",
@@ -745,8 +830,9 @@ class CheckpointTrainer(object):
 
                 # TODO we will want validation data for this as well.
                 self.trainGraphGenerator.generate(
-                        self.netD, self.netG, self.epoch, i,
-                        totit, lossdict, self.datasetFileName)
+                        self.updater, self.epoch, i + 1,
+                        totit, lossdict, self.datasetFileName, 
+                        self.devDatasetFileName)
             # save the training files
             self.saveCheckpointsIfNeeded()
 
@@ -775,9 +861,6 @@ class CheckpointTrainer(object):
             logging.getLogger(__name__).info("Saving checkpoint to %s" % checkpointName)
             torch.save((netD, netG), os.path.join(saveDir, checkpointName))
         
-# TODO maybe the networks should live in here too? Then, anything could be
-# trained according to our framework, without the CheckpointTrainer knowing
-# the details?
 class UpdateStepper(object):
     REAL_LABEL = 1
     FAKE_LABEL = 0
@@ -800,12 +883,51 @@ class UpdateStepper(object):
         self._criterion = nn.MSELoss().cuda(self._kwargs["gpu_id"])
         self._l1Criterion = nn.L1Loss().cuda(self._kwargs["gpu_id"])
 
+    def getLoss(self, dataset, key_prefix):
+        # TODO look here; why isn't it going?
+        # dataset - a TensorDataset
+        # This dataset needs to be a regular-style dataset, not a gan-style one.
+        values = {}
+        batch_size = self._kwargs["batchSize"]
+        tot_points = 0.
+        dataloader = torch.utils.data.DataLoader(
+                dataset, batch_size=batch_size, shuffle=False, 
+                num_workers=0)
+        for i, data in tqdm.tqdm(
+                enumerate(dataloader, 0), total=len(dataloader),
+                desc="Iterations completed: ", leave=False,
+                disable=self._kwargs.get("disablecgantrainprog", True)):
+            logging.getLogger(__name__).info("DBG: Looping")
+            # calculate D loss
+            # TODO multiply by batch sizse!
+            dloss, _ = self.calculateDLoss(data)
+            gloss, _ = self.calculateGLoss(data)
+
+            logging.getLogger(__name__).info("Dict searching...")
+            for k,v in it.chain(dloss.iteritems(), gloss.iteritems()):
+                key = "%s%s" % (key_prefix, k)
+                values[key] = values.get(key, 0.) + batch_size * v
+                logging.getLogger(__name__).info("Added key %s" % key)
+            tot_points += batch_size
+
+        for k in values.iterkeys():
+            values[k] /= tot_points
+        logging.getLogger(__name__).info("Get loss values=%s" % str(key))
+        return values
+
     def calcCriterion(self, output, label, scores):
         loss = self._criterion(output.view(-1), label[:len(output)])
         if self._kwargs["useScore"]:
             loss = torch.mul(loss, scores)
         return loss
     def updateD(self, data):
+        losses, errors = self.calculateDLoss(data)
+        for error in errors:
+            error.backward()
+        self._optimizerD.step()
+        return losses
+    # Wait a minute, there are 2 terms in D-Loss... hence, it's bigger...?
+    def calculateDLoss(self, data):
         self.netD.zero_grad()
         # TODO is this the most efficient way to get data onto the GPU?
         conditional, realImageAndScore = data
@@ -816,7 +938,6 @@ class UpdateStepper(object):
         output = self.netD(conditional, realImageAndScore, train=True)
         self._label.data.fill_(self.REAL_LABEL)
         errD_real = self.calcCriterion(output, self._label, scores)
-        errD_real.backward()
         # D_x is how many of the images (all of which were real) were identified
         # as real.
         D_x = output.data.mean()
@@ -828,19 +949,17 @@ class UpdateStepper(object):
         self._label.data.fill_(self.FAKE_LABEL)
         output = self.netD(conditional, fake, train=True)
         errD_fake = self.calcCriterion(output, self._label, scores)
-        errD_fake.backward()
         # D_G_z1 is how many of the images (all of which were fake) were 
         # identified as real.
         D_G_z1 = output.data.mean()
-        errD = errD_real + errD_fake
-        self._optimizerD.step()
+        errD = (errD_real + errD_fake) / 2.
         # TODO should I return a different value, or an average?
         return {
             "Loss_D": errD.data[0],
             "Loss_D_real": errD_real.data[0],
             "Loss_D_fake": errD_fake.data[0],
             "D_G_z1": D_G_z1,
-            "D(x)": D_x}
+            "D(x)": D_x}, [errD_real, errD_fake]
     def calcL1Loss(self, fakeIm, realIm, scores):
         l1loss = torch.mul(
                 self._l1Criterion(fakeIm, realIm), self._kwargs["lam"])
@@ -848,7 +967,15 @@ class UpdateStepper(object):
             resizescores = scores.contiguous().view(-1, 1).expand(fake.size())
             l1loss = torch.mul(l1loss, resizescores)
         return l1loss
+        
     def updateG(self, data):
+        losses, errors = self.calculateGLoss(data)
+        for error in errors:
+            error.backward()
+        self._optimizerG.step()
+        return losses
+
+    def calculateGLoss(self, data):
         # Update G network
         self.netG.zero_grad()
         conditional, realImageAndScore = data
@@ -863,7 +990,6 @@ class UpdateStepper(object):
         self._label.data.fill_(self.REAL_LABEL)
         output = self.netD(conditional, fake, train=True)
         errG = self.calcCriterion(output, self._label, scores)
-        errG.backward()
         # D_G_z2 is how many of the images (all of which were fake) were
         # identified as real, AFTER the discriminator update.
         D_G_z2 = output.data.mean()
@@ -872,12 +998,11 @@ class UpdateStepper(object):
                 self._noise[:len(realImageAndScore)], conditional, train=True,
                 ignoreCond=self._kwargs.get("ignoreCond"))
         errG_L1 = self.calcL1Loss(fake, realIm, scores)
-        errG_L1.backward()
         self._optimizerG.step()
         return {
                 "Loss_G": errG.data[0],
                 "Loss_L1": errG_L1.data[0],
-                "D_G_z2": D_G_z2}
+                "D_G_z2": D_G_z2}, [errG, errG_L1]
         
     def networkUpdateStep(self, data):
       ret = {}

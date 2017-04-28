@@ -47,12 +47,17 @@ class ShardedDataHandler(object):
   def keyToPath(self, key):
     return os.path.join(self.directory, self.keyToName(key))
 
-def shardAndSave(pdm, outDirName, **kwargs):
+def shardAndSave(pdm, outDirName, dataset, **kwargs):
   """
   Break up data in datasetFileName based on noun pairs. Save the chunks of data
   to folder outDirName.
   """
-  datasetFileName = pdm.trainLoc # TODO we should also do dev data eventually.
+  if dataset == "train":
+    datasetFileName = pdm.trainLoc
+  elif dataset == "dev":
+    datasetFileName = pdm.devLoc
+  else:
+    raise ValueError("Invalid dataset '%s'" % str(dataset))
 
   logging.getLogger(__name__).info("Sharding data in %s" % datasetFileName)
 
@@ -107,6 +112,7 @@ class PairDataManager(object):
         self._directory = directory
         self._andecoder = os.path
         self.trainLoc = os.path.join(self._directory, "pairtrain.pyt")
+        self.devLoc = os.path.join(self._directory, "pairdev.pyt")
         self._role2intFile = "%s_role2Int" % self.trainLoc
         self._noun2intFile = "%s_noun2Int" % self.trainLoc
         self._verb2intFile = "%s_verb2Int" % self.trainLoc

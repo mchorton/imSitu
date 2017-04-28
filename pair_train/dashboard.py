@@ -17,20 +17,22 @@ class GanDashboardMaker(object):
         htmlTable = html.HtmlTable()
         indexToNouncode = mt.reverseMap(torch.load(open(nouncodeToIndexFile)))
         shardedDataHandler = data.ShardedDataHandler(datasetDirectory)
-        dashParzenHandler = data.ShardedDataHandler(parzenDir, ".parzen")
-        ablationHandler = data.ShardedDataHandler(ablationDir, ".ablation")
 
         stderrHandler = data.ShardedDataHandler(trainJpgDir, ".log.stderr")
         stdoutHandler = data.ShardedDataHandler(trainJpgDir, ".log.stdout")
 
         jpgConfig = [
             (data.ShardedDataHandler(trainJpgDir, ".stackloss.jpg"), "All Losses"),
+            (data.ShardedDataHandler(trainJpgDir, ".valloss.jpg"), "Validation Loss"),
             (data.ShardedDataHandler(trainJpgDir, ".predictions.jpg"), "Discriminator Performance"),
-            (data.ShardedDataHandler(trainJpgDir, ".dgloss.jpg"), "Disc / Gen Loss"),
+            (data.ShardedDataHandler(trainJpgDir, ".valpredictions.jpg"), "Devset Discriminator Performance"),
             (data.ShardedDataHandler(trainJpgDir, ".dgz.jpg"), "Change in Predictions on Fake Imgs"),
             (data.ShardedDataHandler(trainJpgDir, ".l1loss.jpg"), "L1 Loss"),
+            (data.ShardedDataHandler(trainJpgDir, ".devl1loss.jpg"), "Dev L1 Loss"),
             (data.ShardedDataHandler(trainJpgDir, ".parzen.jpg"), "Parzen Fit"),
-            (data.ShardedDataHandler(trainJpgDir, ".abl.jpg"), "Ablations")]
+            (data.ShardedDataHandler(trainJpgDir, ".devparzen.jpg"), "Dev Parzen Fit"),
+            (data.ShardedDataHandler(trainJpgDir, ".abl.jpg"), "Ablations"),
+            (data.ShardedDataHandler(trainJpgDir, ".devabl.jpg"), "Dev Ablations")]
 
         plotHandler = data.ShardedDataHandler(trainJpgDir, ".log.jpg")
         parzenTrainimgHandler = data.ShardedDataHandler(trainJpgDir, ".parzen.jpg")
@@ -39,7 +41,7 @@ class GanDashboardMaker(object):
         labelrow = ["N1, N2"] + list(zip(*jpgConfig)[1])
         htmlTable.addRow(*labelrow)
 
-        for i, (n1, n2) in tqdm.tqdm(enumerate(shardedDataHandler.iterNounPairs())):
+        for i, (n1, n2) in enumerate(shardedDataHandler.iterNounPairs()):
             tableRow = []
             intcodes = map(lambda x: indexToNouncode[x], (n1, n2))
             genInfo = "Noun IDS: %s\n" % str((n1, n2))
