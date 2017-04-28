@@ -1,5 +1,3 @@
-# TODO remove this "scores" nonsense.
-# TODO is dropout on in the right places?
 # Training the image transformation logic using a neural network.
 import json
 import hack.stats.kde as kde
@@ -22,7 +20,6 @@ import collections
 import copy
 import constants as pc # short for pair_train constants
 import multiprocessing
-import tblib.pickling_support
 import itertools as it
 import pair_train.dashboard as dash
 import subprocess
@@ -31,22 +28,6 @@ import data as dataman
 import pandas as pd
 import utils.plotutils as pu
 from traceback import print_exc
-tblib.pickling_support.install()
-
-# This is used for capturing errors from subprocesses
-# See rocksportrocker comment here:
-# http://stackoverflow.com/questions/6126007/python-getting-a-traceback-from-a-
-#     multiprocessing-process/16618842
-class ExceptionWrapper(object):
-    def __init__(self, ee):
-        self.ee = ee
-        __,  __, self.tb = sys.exc_info()
-
-    def re_raise(self):
-        raise self.ee.with_traceback(self.tb)
-        # for Python 2 replace the previous line by:
-        # raise self.ee, None, self.tb
-
 
 class NetD(nn.Module):
   def __init__(self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs, vrESize):
@@ -626,23 +607,23 @@ class TrainGraphGenerator(object):
         logging.getLogger(__name__).info("Getting training losses")
         dataset = torch.load(dataset_filename)
         updates.update(stepper.getLoss(dataset, ""))
-        # pretending totit is 0 to trigger certain updates.
+        # pretending totit is 0 to trigger certain updates. JK, I don't have to.
         self.generate(
-                stepper, 0, 0, 0, updates, dataset_filename,
-                devdataset_filename)
+                stepper, 0, 0, totit, updates, dataset_filename,
+                devdataset_filename, forceCalc=True)
+        logging.getLogger(__name__).info("After LIT, data is %s" % str(self._data))
         
     def generate(
             self, stepper, epoch, iteration, totit, losses, datasetFileName,
-            devdataset_filename):
+            devdataset_filename, forceCalc=False):
             # iteration - the number of iterations completed this epoch (never
             # will be '0', at most will be totit)
         if self._graphbn is None:
             return
         self._iterctr += 1
-        logging.getLogger(__name__).info("Calling generate()")
         updates = self._calculateUpdates(
                 stepper, epoch, iteration, totit, losses, datasetFileName,
-                devdataset_filename)
+                devdataset_filename, force=forceCalc)
 
         frac = float(iteration) / float(totit) if totit is not 0 else 0
         timestamp = frac + float(epoch)
@@ -663,18 +644,18 @@ class TrainGraphGenerator(object):
         
     def _calculateUpdates(
             self, stepper, epoch, iteration, totit, losses, datasetFileName,
-            devdataset_filename):
+            devdataset_filename, force=False):
         ganTrainer = GanTrainer(**self._kwargs)
         updates = {}
-        if mt.shouldDo(self._iterctr, self._kwargs["logPer"]):
+        if force or mt.shouldDo(self._iterctr, self._kwargs["logPer"]):
             # TODO losses is goofy
             logging.getLogger(__name__).info("Updating losses: %s" % losses)
             updates.update(losses)
-        if mt.shouldDo(self._iterctr, self._kwargs["logDevPer"]):
+        if force or mt.shouldDo(self._iterctr, self._kwargs["logDevPer"]):
             logging.getLogger(__name__).info("Getting devset losses")
             dataset = torch.load(devdataset_filename)
             updates.update(stepper.getLoss(dataset, "Dev "))
-        if iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateAblationPer"]):
+        if force or (iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateAblationPer"])):
             ablCkpt = self.getAblCkpt(datasetFileName)
             startEpoch = ablCkpt.epoch
             ablCkpt._kwargs["epochs"] = epoch
@@ -690,7 +671,7 @@ class TrainGraphGenerator(object):
             for k,v in abls.iteritems():
                 updates["Dev " + k] = v
 
-        if iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"]):
+        if force or (iteration == (totit) and mt.shouldDo(epoch, self._kwargs["updateParzenPer"])):
             probs = evaluateParzenProb(
                     stepper.netG, datasetFileName, self._pdm, **self._kwargs)
 #def evaluateParzenProb(netG, ganDataSet, pairtraindir, featdir, **kwargs):
@@ -879,9 +860,12 @@ class UpdateStepper(object):
         self._optimizerG = optim.SGD(
                 self.netG.parameters(), lr=self._kwargs["lr"])
 
-        # TODO
-        self._criterion = nn.MSELoss().cuda(self._kwargs["gpu_id"])
+        self._criterion = self._setCriterion(self._kwargs["losstype"]).cuda(self._kwargs["gpu_id"])
         self._l1Criterion = nn.L1Loss().cuda(self._kwargs["gpu_id"])
+    def _setCriterion(self, name):
+        # TODO this bce will be sadtown if used.
+        mapping = {"mse": nn.MSELoss(), "bce": nn.BCELoss()}
+        return mapping[name]
 
     def getLoss(self, dataset, key_prefix):
         # TODO look here; why isn't it going?
@@ -897,22 +881,18 @@ class UpdateStepper(object):
                 enumerate(dataloader, 0), total=len(dataloader),
                 desc="Iterations completed: ", leave=False,
                 disable=self._kwargs.get("disablecgantrainprog", True)):
-            logging.getLogger(__name__).info("DBG: Looping")
             # calculate D loss
             # TODO multiply by batch sizse!
             dloss, _ = self.calculateDLoss(data)
             gloss, _ = self.calculateGLoss(data)
 
-            logging.getLogger(__name__).info("Dict searching...")
             for k,v in it.chain(dloss.iteritems(), gloss.iteritems()):
                 key = "%s%s" % (key_prefix, k)
                 values[key] = values.get(key, 0.) + batch_size * v
-                logging.getLogger(__name__).info("Added key %s" % key)
             tot_points += batch_size
 
         for k in values.iterkeys():
             values[k] /= tot_points
-        logging.getLogger(__name__).info("Get loss values=%s" % str(key))
         return values
 
     def calcCriterion(self, output, label, scores):
@@ -1115,8 +1095,6 @@ class GanDataLoader(object):
 def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
   gpu_id = kwargs["gpu_id"]
   batchSize = kwargs["batchSize"]
-  logging.getLogger(__name__).info("Getting GAN chimeras. kwargs=%s" % \
-      str(kwargs))
   out = []
   nz = netG.inputSize
   noise = ag.Variable(
@@ -1222,7 +1200,6 @@ def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
 
     devData = np.concatenate(kdein, axis=1)
     probs[relevantCond] = gpw.logpdf(devData)
-    logging.getLogger(__name__).info("%d, %d" % (i, logPer))
     if i % logPer == (logPer - 1):
       logging.getLogger(__name__).info("Investigating conditional %s" % pairDataManager.condToString(fullConditional))
       logging.getLogger(__name__).info("number of x points: %d" % len(kdein))

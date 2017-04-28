@@ -513,8 +513,12 @@ class gaussian_kde(object):
 
         if self.ignore_cov:
             if not hasattr(self, '_data_inv_cov'):
-                self._data_covariance = np.identity(self.d)
-                self._data_inv_cov = np.identity(self.d)
+                covs = []
+                for dimension in self.dataset:
+                    covs.append(np.var(dimension))
+                    
+                self._data_covariance = np.diag(covs)
+                self._data_inv_cov = np.diag(np.ones(self.d) / covs)
                 self.covariance = self._data_covariance * self.factor**2
                 self.inv_cov = self._data_inv_cov / self.factor**2
             # All we need to compute is _log_norm_factor

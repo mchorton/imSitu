@@ -129,6 +129,7 @@ class MultiganParameters(object):
                 "procsPerGpu": 1,
                 "lr": 1e-2,
                 "lam": 1e-2,
+                "losstype": "bce",
                 "ignoreCond": False,
                 "minDataPts": 50,
                 "decayPer": 10,
@@ -138,6 +139,7 @@ class MultiganParameters(object):
                 "hiddenSize": 1024,
                 "gdropout": 0.05,
                 "graphPerIter": 1e10,
+                "bw_method": 2 ** 4,
                 "useScore": False,
                 "nz": 0,
                 "activeGpus": [0, 1, 2, 3],
@@ -232,7 +234,6 @@ def runLowlearn():
 
     mp = MultiganParameters(dirconfig)
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["bw_method"] = 2 ** 18
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
@@ -246,7 +247,6 @@ def runLowlearnNice():
     mp = MultiganParameters(dirconfig)
     # TODO too low?
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["bw_method"] = 2 ** 18
     mp.kwargs["updateAblationPer"] = 15
     mp.kwargs["updateParzenPer"] = 10
     runner.generateGanModels(MultiganTrainer(mp))
@@ -262,7 +262,6 @@ def runLowlearnNice2():
     mp = MultiganParameters(dirconfig)
     # TODO too low?
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["bw_method"] = 2 ** 18
     mp.kwargs["decayPer"] = 100
     mp.kwargs["epochs"] = 1000
     mp.kwargs["updateAblationPer"] = 150
@@ -287,7 +286,6 @@ def runProfile(cautious=True):
     mp = MultiganParameters(dirconfig)
     # TODO too low?
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["bw_method"] = 2 ** 18
     mp.kwargs["decayPer"] = 100
     mp.kwargs["decayRate"] = 0.7
     mp.kwargs["epochs"] = 2000
@@ -311,29 +309,28 @@ def runProfile(cautious=True):
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
 def smalltest(cautious=True, seqOverride=False):
-    dirconfig = DirConfig("data/smalltest3/", cautious)
+    dirconfig = DirConfig("data/smalltest4/", cautious)
 
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
     #runner.generateData(DataGenerator(dirconfig, test=False))
 
     mp = MultiganParameters(dirconfig)
-    # TODO too low?
     mp.kwargs["lr"] = 1e-3
-    mp.kwargs["bw_method"] = 2 ** 18 # TODO 
     mp.kwargs["decayPer"] = 100
     mp.kwargs["decayRate"] = 0.7
     mp.kwargs["epochs"] = 1500
     mp.kwargs["updateAblationPer"] = 50
     mp.kwargs["updateParzenPer"] = 50
-    mp.kwargs["nSamples"] = 50 # TODO could be larger...
-    mp.kwargs["nTestSamples"] = 10 # TODO could be larger...
-    mp.kwargs["procsPerGpu"] = 4 # TODO can be higher
-    mp.kwargs["depth"] = 1 # TODO
+    mp.kwargs["nSamples"] = 50
+    mp.kwargs["nTestSamples"] = 10
+    mp.kwargs["procsPerGpu"] = 4
+    mp.kwargs["depth"] = 1
     mp.kwargs["genDepth"] = 1
-    mp.kwargs["skipShardAndSave"] = True
+    mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 5
+    mp.kwargs["dUpdates"] = 3
     mp.kwargs["logDevPer"] = 10
     mp.kwargs["seqOverride"] = seqOverride
     mp.kwargs["lam"] = 1
