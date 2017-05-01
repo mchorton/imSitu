@@ -129,7 +129,7 @@ class MultiganParameters(object):
                 "procsPerGpu": 1,
                 "lr": 1e-2,
                 "lam": 1e-2,
-                "losstype": "bce",
+                "losstype": "log",
                 "ignoreCond": False,
                 "minDataPts": 50,
                 "decayPer": 10,
@@ -139,7 +139,7 @@ class MultiganParameters(object):
                 "hiddenSize": 1024,
                 "gdropout": 0.05,
                 "graphPerIter": 1e10,
-                "bw_method": 2 ** 4,
+                "bw_method": 2 ** 6,
                 "useScore": False,
                 "nz": 0,
                 "activeGpus": [0, 1, 2, 3],
@@ -309,7 +309,7 @@ def runProfile(cautious=True):
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
 def smalltest(cautious=True, seqOverride=False):
-    dirconfig = DirConfig("data/smalltest4/", cautious)
+    dirconfig = DirConfig("data/smalltest5/", cautious)
 
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
@@ -330,10 +330,11 @@ def smalltest(cautious=True, seqOverride=False):
     mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 5
-    mp.kwargs["dUpdates"] = 3
+    mp.kwargs["dUpdates"] = 1
     mp.kwargs["logDevPer"] = 10
+    mp.kwargs["losstype"] = "square"
     mp.kwargs["seqOverride"] = seqOverride
-    mp.kwargs["lam"] = 1
+    mp.kwargs["lam"] = 1e-2
     mp.kwargs["trgandnoImg"] = True
     mp.kwargs["minDataPts"] = 50
     mp.kwargs["graphPerIter"] = 500

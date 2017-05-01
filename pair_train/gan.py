@@ -588,7 +588,7 @@ class TrainGraphGenerator(object):
                         "xlabel": "Epoch",
                         "ylabel": "Loss"},
                 {
-                        "chosen": ["Val True Loss", "Val Ablated Loss"],
+                        "chosen": ["Dev True Loss", "Dev Ablated Loss"],
                         "loc": self._graphbn + ".devabl.jpg",
                         "title": "Ablation Losses",
                         "xlabel": "Epoch",
@@ -648,7 +648,6 @@ class TrainGraphGenerator(object):
         ganTrainer = GanTrainer(**self._kwargs)
         updates = {}
         if force or mt.shouldDo(self._iterctr, self._kwargs["logPer"]):
-            # TODO losses is goofy
             logging.getLogger(__name__).info("Updating losses: %s" % losses)
             updates.update(losses)
         if force or mt.shouldDo(self._iterctr, self._kwargs["logDevPer"]):
@@ -809,7 +808,6 @@ class CheckpointTrainer(object):
 
                 lossdict = self.updater.networkUpdateStep(data)
 
-                # TODO we will want validation data for this as well.
                 self.trainGraphGenerator.generate(
                         self.updater, self.epoch, i + 1,
                         totit, lossdict, self.datasetFileName, 
@@ -851,26 +849,59 @@ class UpdateStepper(object):
         self.netD = netD
         self.netG = netG
 
-        # TODO update the learning rate here!
-
         self._noise = ag.Variable(torch.FloatTensor(self._kwargs["batchSize"], self._kwargs["nz"]).cuda(self._kwargs["gpu_id"]))
-        self._label = ag.Variable(torch.FloatTensor(self._kwargs["batchSize"]).cuda(self._kwargs["gpu_id"]))
         self._optimizerD = optim.SGD(
                 self.netD.parameters(), lr=self._kwargs["lr"])
         self._optimizerG = optim.SGD(
                 self.netG.parameters(), lr=self._kwargs["lr"])
 
-        self._criterion = self._setCriterion(self._kwargs["losstype"]).cuda(self._kwargs["gpu_id"])
         self._l1Criterion = nn.L1Loss().cuda(self._kwargs["gpu_id"])
-    def _setCriterion(self, name):
-        # TODO this bce will be sadtown if used.
-        mapping = {"mse": nn.MSELoss(), "bce": nn.BCELoss()}
-        return mapping[name]
 
+        losstype = self._kwargs["losstype"]
+        if losstype == "log":
+            self.computeDCriterionOnReal = self.logDCriterionOnReal
+            self.computeDCriterionOnFake = self.logDCriterionOnFake
+            self.computeGCriterion = self.logGCriterion
+        elif losstype == "square":
+            self.computeDCriterionOnReal = self.sqDCriterionOnReal
+            self.computeDCriterionOnFake = self.sqDCriterionOnFake
+            self.computeGCriterion = self.sqGCriterion
+        else:
+            raise ValueError("Invalid loss type '%s'" % losstype)
+
+    # TODO these sort of implicitly encode that REAL=1, FAKE=0
+    def logDCriterionOnReal(self, discOnReal, score):
+        ret = -1. * torch.mean(torch.log(discOnReal))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
+    def logDCriterionOnFake(self, discOnFake, score):
+        ret = -1. * torch.mean(torch.log(1. - discOnFake))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
+    def logGCriterion(self, discOnFake, score):
+        ret = torch.mean(torch.log(1. - discOnFake))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
+    def sqDCriterionOnReal(self, discOnReal, score):
+        ret = torch.mean(torch.pow(discOnReal - 1., 2))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
+    def sqDCriterionOnFake(self, discOnFake, score):
+        ret = torch.mean(torch.pow(discOnFake, 2))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
+    def sqGCriterion(self, discOnFake, score):
+        ret = torch.mean(torch.pow(discOnFake - 1., 2))
+        if self._kwargs["useScore"]:
+            sys.exit(1) # TODO not supported right now.
+        return ret
     def getLoss(self, dataset, key_prefix):
-        # TODO look here; why isn't it going?
         # dataset - a TensorDataset
-        # This dataset needs to be a regular-style dataset, not a gan-style one.
         values = {}
         batch_size = self._kwargs["batchSize"]
         tot_points = 0.
@@ -881,8 +912,6 @@ class UpdateStepper(object):
                 enumerate(dataloader, 0), total=len(dataloader),
                 desc="Iterations completed: ", leave=False,
                 disable=self._kwargs.get("disablecgantrainprog", True)):
-            # calculate D loss
-            # TODO multiply by batch sizse!
             dloss, _ = self.calculateDLoss(data)
             gloss, _ = self.calculateGLoss(data)
 
@@ -895,18 +924,12 @@ class UpdateStepper(object):
             values[k] /= tot_points
         return values
 
-    def calcCriterion(self, output, label, scores):
-        loss = self._criterion(output.view(-1), label[:len(output)])
-        if self._kwargs["useScore"]:
-            loss = torch.mul(loss, scores)
-        return loss
     def updateD(self, data):
         losses, errors = self.calculateDLoss(data)
         for error in errors:
             error.backward()
         self._optimizerD.step()
         return losses
-    # Wait a minute, there are 2 terms in D-Loss... hence, it's bigger...?
     def calculateDLoss(self, data):
         self.netD.zero_grad()
         # TODO is this the most efficient way to get data onto the GPU?
@@ -916,8 +939,7 @@ class UpdateStepper(object):
         _, scores = self._pdm.decodeFeatsAndScore(realImageAndScore)
 
         output = self.netD(conditional, realImageAndScore, train=True)
-        self._label.data.fill_(self.REAL_LABEL)
-        errD_real = self.calcCriterion(output, self._label, scores)
+        errD_real = self.computeDCriterionOnReal(output, scores)
         # D_x is how many of the images (all of which were real) were identified
         # as real.
         D_x = output.data.mean()
@@ -926,20 +948,18 @@ class UpdateStepper(object):
         fake = self.netG(
                 self._noise[:len(realImageAndScore)], conditional, train=True,
                 ignoreCond=self._kwargs.get("ignoreCond", False))
-        self._label.data.fill_(self.FAKE_LABEL)
         output = self.netD(conditional, fake, train=True)
-        errD_fake = self.calcCriterion(output, self._label, scores)
+        errD_fake = self.computeDCriterionOnFake(output, scores)
         # D_G_z1 is how many of the images (all of which were fake) were 
         # identified as real.
         D_G_z1 = output.data.mean()
         errD = (errD_real + errD_fake) / 2.
-        # TODO should I return a different value, or an average?
         return {
             "Loss_D": errD.data[0],
             "Loss_D_real": errD_real.data[0],
             "Loss_D_fake": errD_fake.data[0],
             "D_G_z1": D_G_z1,
-            "D(x)": D_x}, [errD_real, errD_fake]
+            "D(x)": D_x}, [errD]
     def calcL1Loss(self, fakeIm, realIm, scores):
         l1loss = torch.mul(
                 self._l1Criterion(fakeIm, realIm), self._kwargs["lam"])
@@ -967,9 +987,8 @@ class UpdateStepper(object):
         fake = self.netG(
                 self._noise[:len(realImageAndScore)], conditional, train=True,
                 ignoreCond=self._kwargs.get("ignoreCond"))
-        self._label.data.fill_(self.REAL_LABEL)
         output = self.netD(conditional, fake, train=True)
-        errG = self.calcCriterion(output, self._label, scores)
+        errG = self.computeGCriterion(output, scores)
         # D_G_z2 is how many of the images (all of which were fake) were
         # identified as real, AFTER the discriminator update.
         D_G_z2 = output.data.mean()
@@ -1123,8 +1142,6 @@ def evaluateParzenProb(netG, datasetFileName, pairDataManager, **kwargs):
       logging.getLogger(__name__).info("Error computing parzen value: %s" % str(e))
       # TODO
       return {"Parzen Average": 0}
-    # TODO just take a flat average of them, I guess?
-    # TODO this method should also give back dev set stuff.
     _sum = 0.
     _den = 0.
     for k,v in probs.iteritems():
@@ -1133,10 +1150,6 @@ def evaluateParzenProb(netG, datasetFileName, pairDataManager, **kwargs):
     return {"Parzen Average": _sum / _den}
 
 def parzenWindowProb(netG, devData, pairDataManager, **kwargs):
-  # TODO this is using ydata as the conditional! It shouldn't.
-  # I need to fix many things about this function.
-  # TODO with only 5k datapoints, this runs a 12G gpu out of memory. Seems
-  # like it shouldn't... I should 
   logging.getLogger(__name__).info("Making parzen window with settings %s" % \
       str(kwargs))
   """
