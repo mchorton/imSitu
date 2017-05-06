@@ -31,6 +31,7 @@ class GanDashboardMaker(object):
             (data.ShardedDataHandler(trainJpgDir, ".devl1loss.jpg"), "Dev L1 Loss"),
             (data.ShardedDataHandler(trainJpgDir, ".parzen.jpg"), "Parzen Fit"),
             (data.ShardedDataHandler(trainJpgDir, ".devparzen.jpg"), "Dev Parzen Fit"),
+            (data.ShardedDataHandler(trainJpgDir, ".rank.jpg"), "Mean Rank"),
             (data.ShardedDataHandler(trainJpgDir, ".abl.jpg"), "Ablations"),
             (data.ShardedDataHandler(trainJpgDir, ".devabl.jpg"), "Dev Ablations")]
 

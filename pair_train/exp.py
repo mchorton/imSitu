@@ -142,6 +142,9 @@ class MultiganParameters(object):
                 "bw_method": 2 ** 6,
                 "useScore": False,
                 "nz": 0,
+                "updateRankPer": 40,
+                "nn_sampled_pts": 20,
+                "nn_considered": int(1e9),
                 "activeGpus": [0, 1, 2, 3],
                 "style": "trgan"}
 
@@ -211,6 +214,7 @@ def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     mp.kwargs["updateParzenPer"] = 10
     mp.kwargs["procsPerGpu"] = 1
     mp.kwargs["graphPerIter"] = 20
+    mp.kwargs["losstype"] = "square"
 
     runner.generateGanModels(MultiganTrainer(mp))
     """
@@ -308,8 +312,42 @@ def runProfile(cautious=True):
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
+def weakfull(cautious=True, **kwargs):
+    dirconfig = DirConfig("data/weakfull/", cautious)
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    #runner.generateData(DataGenerator(dirconfig, test=False))
+
+    mp = MultiganParameters(dirconfig)
+    mp.kwargs["lr"] = 1e-3
+    mp.kwargs["decayPer"] = 100
+    mp.kwargs["decayRate"] = 0.7
+    mp.kwargs["epochs"] = 1500
+    mp.kwargs["updateAblationPer"] = 50
+    mp.kwargs["updateParzenPer"] = 1
+    mp.kwargs["nSamples"] = 50
+    mp.kwargs["nTestSamples"] = 10
+    mp.kwargs["updateRankPer"] = 1
+    mp.kwargs["procsPerGpu"] = 4
+    mp.kwargs["depth"] = 1
+    mp.kwargs["genDepth"] = 1
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 5
+    mp.kwargs["dUpdates"] = 1
+    mp.kwargs["logDevPer"] = 10
+    mp.kwargs["losstype"] = "square"
+    mp.kwargs["lam"] = 1e-2
+    mp.kwargs["trgandnoImg"] = True
+    mp.kwargs["minDataPts"] = 50
+    mp.kwargs["graphPerIter"] = 1
+    mp.kwargs["measurePerf"] = False
+    mp.kwargs.update(kwargs)
+    runner.generateGanModels(MultiganTrainer(mp))
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
 def smalltest(cautious=True, seqOverride=False):
-    dirconfig = DirConfig("data/smalltest5/", cautious)
+    dirconfig = DirConfig("data/smalltest_deeper/", cautious)
 
     runner = MultiganExperimentRunner()
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
@@ -324,9 +362,9 @@ def smalltest(cautious=True, seqOverride=False):
     mp.kwargs["updateParzenPer"] = 50
     mp.kwargs["nSamples"] = 50
     mp.kwargs["nTestSamples"] = 10
-    mp.kwargs["procsPerGpu"] = 4
-    mp.kwargs["depth"] = 1
-    mp.kwargs["genDepth"] = 1
+    mp.kwargs["procsPerGpu"] = 1
+    mp.kwargs["depth"] = 8
+    mp.kwargs["genDepth"] = 8
     mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 5

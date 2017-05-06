@@ -20,7 +20,6 @@ import utils.methods as mt
 import itertools as it
 import split.v2pos.htmlgen as html
 import split.data_utils as du
-import copy
 import constants as pc # short for pair_train constants
 import split.splitutils as sut
 import data as dataman

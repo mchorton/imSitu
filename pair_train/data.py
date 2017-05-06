@@ -1,3 +1,4 @@
+import torch.autograd as ag
 import utils.mylogger as logging
 import os
 import re
@@ -143,7 +144,7 @@ class PairDataManager(object):
                 ret[i] = du.decodeNoun(samp)
         return ret
     def decodeCond(self, cond):
-        assert(cond.size(1) == 1039), "Invalid cond!"
+        assert(cond.size(1) == 1039), "Invalid cond, size=%d" % cond.size(1)
         return cond[:,:12], cond[:,12], cond[:,13], cond[:,14], cond[:,15:]
     def decodeFeatsAndScore(self, fas):
         assert(fas.size(1) == pc.IMFEATS + 1), "Invalid feats-and-score!"
@@ -184,3 +185,38 @@ def getIm2Feats(featureDirectory, imNames):
   imToFeatures = {name: np.array(values, dtype=np.float64) for name, values in imToFeatures.iteritems() }
   return imToFeatures
 
+def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
+  gpu_id = kwargs["gpu_id"]
+  batchSize = kwargs["batchSize"]
+  out = []
+  nz = netG.inputSize
+  noise = ag.Variable(
+      torch.FloatTensor(batchSize, nz), requires_grad=False).cuda(gpu_id)
+  yvar = ag.Variable(yval.expand(batchSize, yval.size(1))).cuda(gpu_id)
+  for i in range(nTestPoints):
+    noise.data.normal_(0, 1)
+    if i * batchSize > nTestPoints:
+      break
+    out = torch.cat(out + [netG(noise, yvar, dropoutOn, ignoreCond=False)], 0)
+    out = [out]
+  return out[0][:nTestPoints]
+
+class CondSharder(object):
+    """
+    Capable of sharding a dataset into pieces that have the same conditional.
+    """
+    def __init__(self, style):
+        self._style = style
+    def shard(self, condition_by, dataset):
+        """
+        condition_by: something called on full_conditional, to get the key
+        dataset - a torch.TensorDataset containing the data.
+        """
+        results = collections.defaultdict(list)
+        dataloader = td.DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
+        for i, data in enumerate(dataloader, 0):
+            full_conditional, im_and_score = data
+            conditional = condition_by(full_conditional)
+            results[conditional].append(data)
+
+        return results
