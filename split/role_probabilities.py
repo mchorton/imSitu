@@ -264,6 +264,12 @@ class WholisticSimCalc(object):
   def getWSLam(self):
     return lambda vrProb, role, noun1, noun2: self.wholisticSimilarity(vrProb, role, noun1, noun2)
 
+class OneSimCalc(object):
+    def __init__(self, vrn2Imgs):
+        pass
+    def getWSLam(self):
+        return lambda vrProb, role, noun1, noun2: 1.
+
 def getnn2vr2score(v2r2nn2score):
   ret = {}
   for v,rest1 in v2r2nn2score.iteritems():

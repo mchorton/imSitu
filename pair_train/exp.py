@@ -42,29 +42,37 @@ class DirConfig(object):
         return os.path.join(self.basedir, directory)
 
 class DataGenerator(object):
-    def __init__(self, dirConfig, test=False, mode="max"):
-        self._config = dirConfig
+    def __init__(self, parameters, test=False):
+        self._parameters = parameters
         self._test = test
-        self._mode = mode
-    def generate(self):
+    @property
+    def _config(self):
+        return self._parameters.dirconfig
+    @property
+    def _kwargs(self):
+        return self._parameters.kwargs
+    def generate(self, **kwargs):
         spsp.copyDataSplit(
                 self._config.localsplitdir, self._config.splitdir,
                 test=self._test)
-        rpe.generateAllDistVecStyle(
-                self._config.distdir,
-                self._config.trainSetName)
+        if not self._kwargs["skip_generate_dists"]:
+            rpe.generateAllDistVecStyle(
+                    self._config.distdir,
+                    self._config.trainSetName,
+                    self._kwargs["diststyle"])
         logging.getLogger(__name__).info("vrndir: %s" % self._config.vrndir)
         rpe.getVrnData(
                 self._config.distdir, self._config.trainSetName,
                 self._config.vrndir, thresh=float('inf'), freqthresh=10,
                 blacklistprs = [], bestNounOnly = True, noThreeLabel = True,
-                includeWSC=True, noOnlyOneRole=True, strictImgSep=True)
+                includeWSC=True, noOnlyOneRole=True, strictImgSep=True,
+                held_out_pairs=self._kwargs["held_out_pairs"])
         pairnn.makeDataNice(
                 self._config.pairDataTrain,
                 self._config.pairDataDev,
                 self._config.featdir,
                 self._config.vrnDataName,
-                mode=self._mode)
+                mode=self._kwargs["mode"])
 
 class PhpGenerator(object):
     def __init__(self, dirconfig):
@@ -98,10 +106,15 @@ class PhpGenerator(object):
                 self._dirconfig.multiganlogdir]
 
 class MultiganExperimentRunner(object):
-    def __init__(self):
-        pass
-    def _run_rerooted(self, func, *args, **kwargs):
-        func(*args, **kwargs)
+    def __init__(self, parameters, test=False):
+        self._parameters = parameters
+        self._test = test
+    def run(self):
+        PhpGenerator(self._parameters.dirconfig).generate()
+        DataGenerator(
+                self._parameters,
+                test=self._test).generate()
+        MultiganTrainer(self._parameters).generate()
     def generateData(self, dataGenerator):
         self._run_rerooted(dataGenerator.generate)
     def generateGanModels(self, ganTrainer):
@@ -110,14 +123,14 @@ class MultiganExperimentRunner(object):
         phpGenerator.generate()
 
 class MultiganParameters(object):
-    def __init__(self, dirConfig):
-        self._config = dirConfig
+    def __init__(self, dirconfig):
+        self.dirconfig = dirconfig
         self.args = [
-                self._config.multigandir,
-                self._config.pairDataTrain,
-                self._config.multiganlogdir,
-                self._config.pairdir,
-                self._config.featdir]
+                self.dirconfig.multigandir,
+                self.dirconfig.pairDataTrain,
+                self.dirconfig.multiganlogdir,
+                self.dirconfig.pairdir,
+                self.dirconfig.featdir]
         self.kwargs = {
                 "epochs": 200,
                 "gUpdates": 1,
@@ -138,11 +151,15 @@ class MultiganParameters(object):
                 "batchSize": 32,
                 "hiddenSize": 1024,
                 "gdropout": 0.05,
+                "held_out_pairs": {},
                 "graphPerIter": 1e10,
                 "bw_method": 2 ** 6,
                 "useScore": False,
                 "nz": 0,
+                "mode": "max",
                 "updateRankPer": 40,
+                "skip_generate_dists": False,
+                "diststyle": "",
                 "nn_sampled_pts": 20,
                 "nn_considered": int(1e9),
                 "activeGpus": [0, 1, 2, 3],
@@ -163,10 +180,6 @@ def runTestExp():
         shutil.rmtree(expdir)
     dirconfig = DirConfig(expdir)
 
-    runner = MultiganExperimentRunner()
-    runner.generatePhpDirectory(PhpGenerator(dirconfig))
-    runner.generateData(DataGenerator(dirconfig, test=True))
-
     mp = MultiganParameters(dirconfig)
     mp.kwargs["epochs"] = 2
     mp.kwargs["logPer"] = 1
@@ -178,8 +191,22 @@ def runTestExp():
     mp.kwargs["graphPerIter"] = 1
     mp.kwargs["lr"] = 1e-5
     mp.kwargs["seqOverride"] = False
+    mp.kwargs["skip_generate_dists"] = False
+    mp.kwargs["held_out_pairs"] = {
+            ("n04256520", "n02818832"): 0.5, # sofa -> bed
+            ("n02374451", "n02402425"): 0.5, # horse -> cattle
+            ("n02084071", "n02121620"): 0.5, # dog -> cat
+            ("n02958343", "n04490091"): 0.5, # car -> truck
+            ("n02958343", "n02930766"): 0.5, # car -> cab
+            ("n01503061", "n01605630"): 0.5, # bird -> hawk
+            ("n03948459", "n04090263"): 0.5, # pistol -> rifle
+            ("n07747607", "n07749582"): 0.5, # orange -> lemon
+            ("n11669921", "n13104059"): 0.5, # flower -> tree
+            ("n08613733", "n08438533"): 0.5, # outdoors -> forest
+        }
 
-    runner.generateGanModels(MultiganTrainer(mp))
+    runner = MultiganExperimentRunner(mp, test=True)
+    runner.run()
 
 def runPartialTestExp(expdir="data/test_exp/", mode="max"):
     """
@@ -349,10 +376,6 @@ def weakfull(cautious=True, **kwargs):
 def smalltest(cautious=True, seqOverride=False):
     dirconfig = DirConfig("data/smalltest_deeper/", cautious)
 
-    runner = MultiganExperimentRunner()
-    runner.generatePhpDirectory(PhpGenerator(dirconfig))
-    #runner.generateData(DataGenerator(dirconfig, test=False))
-
     mp = MultiganParameters(dirconfig)
     mp.kwargs["lr"] = 1e-3
     mp.kwargs["decayPer"] = 100
@@ -377,8 +400,56 @@ def smalltest(cautious=True, seqOverride=False):
     mp.kwargs["minDataPts"] = 50
     mp.kwargs["graphPerIter"] = 500
     mp.kwargs["measurePerf"] = False
+
+    runner = MultiganExperimentRunner()
+    runner.generatePhpDirectory(PhpGenerator(dirconfig))
+    runner.generateData(DataGenerator(dirconfig, test=False, **mp.kwargs))
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
+
+def holdout(cautious=True, seqOverride=False):
+    dirconfig = DirConfig("data/holdout/", cautious)
+
+    mp = MultiganParameters(dirconfig)
+    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["decayPer"] = 1e10
+    mp.kwargs["decayRate"] = 1.
+    mp.kwargs["epochs"] = 1500
+    mp.kwargs["updateAblationPer"] = 50
+    mp.kwargs["updateParzenPer"] = 50
+    mp.kwargs["nSamples"] = 50
+    mp.kwargs["nTestSamples"] = 10
+    mp.kwargs["procsPerGpu"] = 1
+    mp.kwargs["depth"] = 8
+    mp.kwargs["genDepth"] = 8
+    mp.kwargs["skipShardAndSave"] = False
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 5
+    mp.kwargs["dUpdates"] = 1
+    mp.kwargs["logDevPer"] = 10
+    mp.kwargs["losstype"] = "square"
+    mp.kwargs["seqOverride"] = seqOverride
+    mp.kwargs["lam"] = 5e-2
+    mp.kwargs["trgandnoImg"] = True
+    mp.kwargs["minDataPts"] = 50
+    mp.kwargs["graphPerIter"] = 500
+    mp.kwargs["measurePerf"] = False
+    mp.kwargs["skip_generate_dists"] = True
+    mp.kwargs["held_out_pairs"] = {
+            ("n04256520", "n02818832"): 0.5, # sofa -> bed
+            ("n02374451", "n02402425"): 0.5, # horse -> cattle
+            ("n02084071", "n02121620"): 0.5, # dog -> cat
+            ("n02958343", "n04490091"): 0.5, # car -> truck
+            ("n02958343", "n02930766"): 0.5, # car -> cab
+            ("n01503061", "n01605630"): 0.5, # bird -> hawk
+            ("n03948459", "n04090263"): 0.5, # pistol -> rifle
+            ("n07747607", "n07749582"): 0.5, # orange -> lemon
+            ("n11669921", "n13104059"): 0.5, # flower -> tree
+            ("n08613733", "n08438533"): 0.5, # outdoors -> forest
+        }
+
+    runner = MultiganExperimentRunner(mp)
+    runner.run()
 
 if __name__ == '__main__':
     runLowlearnNice2()

@@ -1,3 +1,4 @@
+import operator as op
 import cPickle
 import gensim.models.word2vec as w2v
 import itertools as it
@@ -36,7 +37,7 @@ def saveAllDistances(data, vrProbs, outdir, nProc=None, useCache=False):
     cPickle.dump(vrn2dist, open(outfile, "w"))
   return needUpdate
 
-def generateAllDistVecStyle(outdir, dataset):
+def generateAllDistVecStyle(outdir, dataset, diststyle):
   if not os.path.exists(outdir):
     os.makedirs(outdir)
   logging.getLogger(__name__).info("Getting dataset")
@@ -45,7 +46,12 @@ def generateAllDistVecStyle(outdir, dataset):
   vrn2Imgs = du.getvrn2Imgs(data)
 
   logging.getLogger(__name__).info("Getting Wholistic Sim Obj")
-  wsc = rp.WholisticSimCalc(vrn2Imgs)
+  if diststyle == "vec":
+    wsc = rp.WholisticSimCalc(vrn2Imgs)
+  elif diststyle == "none" or diststyle == "":
+    wsc = rp.OneSimCalc(vrn2Imgs)
+  else:
+    raise ValueError("Invalid diststyle '%s'" % diststyle)
 
   vrProbs = rp.VRProbDispatcher(data, None, None, wsc.getWSLam())
   needUpdate = saveAllDistances(data, vrProbs, outdir)
@@ -142,10 +148,13 @@ def getVrnData(*args, **kwargs):
     argFile.write("ARGS=%s\nKWARGS=%s" % (str(args), str(kwargs)))
   return getVrnDataActual(*args, **kwargs)
 
-def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True):
+def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, blacklistprs = [set(["man", "woman"]), set(["man", "person"]), set(["woman", "person"]), set(["child", "male child"]), set(["child", "female child"])], bestNounOnly = True, noThreeLabel = True, includeWSC=True, noOnlyOneRole=True, strictImgSep=True, held_out_pairs={}):
   """
   gets a json object describing image pairs.
   pairing_score, image1, image2, transformation_role, image1_noun_value, image2_noun_value, image1_merged_reference, image2_merged_reference
+  @param held_out_pairs: {("n1", "n2"): 0.5, ...} ; i.e. a map from pairs of 
+         nouns to the percentage of images held out (usually to allow us to
+         generate them)
   """
 
   toShow = rp.getSimilaritiesList(distdir, datasetName, thresh, freqthresh, blacklistprs, bestNounOnly, noThreeLabel, noOnlyOneRole, strictImgSep)
@@ -156,31 +165,66 @@ def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, bl
   examiner.analyze(dataset)
 
   def stringifyKeys(obj):
-    # return a copy of obj except the keys are lists instead of 
+    # return a copy of obj except the keys are strings instead of
     return {str(k): v for k,v in obj.iteritems()}
 
   def decodeVals(obj):
     return {k: du.decodeNoun(v) for k,v in obj.iteritems()}
 
-  myobj = []
+  # Choose images to hold out from toShow
+  mydata = collections.defaultdict(lambda : collections.defaultdict(int))
   for stuff in toShow:
-    myobj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), stuff[0], stuff[1], stringifyKeys(examiner.getCanonicalLabels(stuff[3])), stringifyKeys(examiner.getCanonicalLabels(stuff[4]))])
+    for pair, _ in held_out_pairs.iteritems():
+      if pair == (stuff[0], stuff[1]):
+        mydata[pair][stuff[4]] += 1
 
+  held_out_names = {}
+  held_out_stuff = {}
+  heldback_images = set()
+  for pair, img2count in mydata.iteritems():
+    mycandidates = img2count.items()
+    mycandidates.sort(key=op.itemgetter(1), reverse=True)
+    heldfactor = held_out_pairs[pair]
+    otherfactor = 1. - heldfactor
+    heldwt = 0.
+    otherwt = 0.
+
+    for imgname, wt in mycandidates:
+        if heldwt / heldfactor < otherwt / otherfactor:
+            # this will be held back.
+            heldback_images.add(imgname)
+            heldwt += wt
+        else:
+            # not held back.
+            otherwt += wt
+    logging.getLogger(__name__).info("Pair %s: Holding back %f weight, leaving %f weight (held back %f, expected %f)" % (pair, heldwt, otherwt, 1. * (heldwt) / (heldwt + otherwt), heldfactor))
+        
+  myobj = []
   myDecodedObj = []
+  myDecodedHeldout = []
   for stuff in toShow:
+    pair = (stuff[0], stuff[1])
+    if stuff[3] in heldback_images or stuff[4] in heldback_images:
+      # don't append this to the objects.
+      myDecodedHeldout.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), du.decodeNoun(stuff[0]), du.decodeNoun(stuff[1]), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[3]))), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[4])))])
+      continue
+    myobj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), stuff[0], stuff[1], stringifyKeys(examiner.getCanonicalLabels(stuff[3])), stringifyKeys(examiner.getCanonicalLabels(stuff[4]))])
     myDecodedObj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), du.decodeNoun(stuff[0]), du.decodeNoun(stuff[1]), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[3]))), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[4])))])
-  #suffix = "%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s__%s_%s" % ("thresh", str(thresh), "freqthresh", str(freqthresh), "bestNounOnly", str(bestNounOnly), "blacklistprs", str(blacklistprs), "noThreeLabel", str(noThreeLabel), "strictImgSep", str(strictImgSep), "noOnlyOneRole", str(noOnlyOneRole))
-  suffix = "%s__%s__%s__%s__%s__%s__%s" % (str(thresh), str(freqthresh), str(bestNounOnly), str(blacklistprs), str(noThreeLabel), str(strictImgSep), str(noOnlyOneRole))
 
   outLoc = os.path.join(outDir, "vrnData.json")
   decodedLoc = os.path.join(outDir, "_decoded_vrnData.json")
+  decodedHeldoutLoc = os.path.join(outDir, "_decoded_heldout_vrnData.json")
   logging.getLogger(__name__).info("Writing vrndata to %s" % outLoc)
   json.dump(myobj, open(outLoc, "w+"))
   json.dump(myDecodedObj, open(decodedLoc, "w+"))
+  json.dump(myDecodedHeldout, open(decodedHeldoutLoc, "w+"))
+
+  json.dump(list(heldback_images), open(os.path.join(outDir, "heldback.json"), "w+"))
 
   makeMyHtml(outDir, myDecodedObj)
+  makeMyHtml(outDir, myDecodedHeldout, loc="heldout_index.php")
 
-def makeMyHtml(outDir, decodedVrnData, maxElems = 500):
+def makeMyHtml(outDir, decodedVrnData, maxElems = 500, loc="index.php"):
   logging.getLogger(__name__).info("Making HTML")
 
   # sort by score.
@@ -203,7 +247,7 @@ def makeMyHtml(outDir, decodedVrnData, maxElems = 500):
   maker.addElement(arguments)
   maker.addElement(table)
 
-  htmlOut = os.path.join(outDir, "index.php")
+  htmlOut = os.path.join(outDir, loc)
   logging.getLogger(__name__).info("Writing vrndata html to %s" % htmlOut)
   maker.save(htmlOut)
 
