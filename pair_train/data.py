@@ -89,6 +89,17 @@ def shardAndSave(pdm, outDirName, dataset, **kwargs):
       pair: data for pair, data in nounpairToData.iteritems() if len(data) > minDataPts}
   logging.getLogger(__name__).info(
       "Filtered down to %d unique noun pairs" % len(nounpairToData))
+
+  train_only = kwargs.get("train_only", None)
+  if train_only:
+    new_data = {}
+    for key in train_only:
+        semantic_key = (pdm.noun2int[key[0]], pdm.noun2int[key[1]])
+        new_data[semantic_key] = nounpairToData[semantic_key]
+    nounpairToData = new_data
+    logging.getLogger(__name__).info("Used train_only to filter to %d points" %
+        len(nounpairToData))
+    
   saver = ShardedDataHandler(outDirName)
   saver.save(nounpairToData)
 

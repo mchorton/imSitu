@@ -111,9 +111,12 @@ class MultiganExperimentRunner(object):
         self._test = test
     def run(self):
         PhpGenerator(self._parameters.dirconfig).generate()
-        DataGenerator(
-                self._parameters,
-                test=self._test).generate()
+        if not self._parameters.kwargs.get("skip_data_generator", None):
+            DataGenerator(
+                    self._parameters,
+                    test=self._test).generate()
+        else:
+            logging.getLogger(__name__).info("Skipping data generation")
         MultiganTrainer(self._parameters).generate()
     def generateData(self, dataGenerator):
         self._run_rerooted(dataGenerator.generate)
@@ -407,11 +410,12 @@ def smalltest(cautious=True, seqOverride=False):
     runner.generateGanModels(MultiganTrainer(mp))
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
-def holdout(cautious=True, seqOverride=False):
+def holdout(cautious=True, **kwargs):
     dirconfig = DirConfig("data/holdout/", cautious)
+    dirconfig.featdir = "data/regression_filtered_fc7/"
 
     mp = MultiganParameters(dirconfig)
-    mp.kwargs["lr"] = 1e-5
+    mp.kwargs["lr"] = 1e-4
     mp.kwargs["decayPer"] = 1e10
     mp.kwargs["decayRate"] = 1.
     mp.kwargs["epochs"] = 1500
@@ -420,15 +424,15 @@ def holdout(cautious=True, seqOverride=False):
     mp.kwargs["nSamples"] = 50
     mp.kwargs["nTestSamples"] = 10
     mp.kwargs["procsPerGpu"] = 1
-    mp.kwargs["depth"] = 8
-    mp.kwargs["genDepth"] = 8
+    mp.kwargs["depth"] = 2
+    mp.kwargs["genDepth"] = 2
     mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 5
     mp.kwargs["dUpdates"] = 1
     mp.kwargs["logDevPer"] = 10
     mp.kwargs["losstype"] = "square"
-    mp.kwargs["seqOverride"] = seqOverride
+    mp.kwargs["seqOverride"] = False
     mp.kwargs["lam"] = 5e-2
     mp.kwargs["trgandnoImg"] = True
     mp.kwargs["minDataPts"] = 50
@@ -447,6 +451,13 @@ def holdout(cautious=True, seqOverride=False):
             ("n11669921", "n13104059"): 0.5, # flower -> tree
             ("n08613733", "n08438533"): 0.5, # outdoors -> forest
         }
+    mp.kwargs["train_only"] = [
+            ("n01503061", "n01605630"), # bird -> hawk # 161 ;
+            ("n03948459", "n04090263"), # pistol -> rifle # 92
+            ("n11669921", "n13104059"), # flower -> tree # 221
+            ("n08613733", "n08438533"), # outdoors -> forest # 111
+        ]
+    mp.kwargs.update(kwargs)
 
     runner = MultiganExperimentRunner(mp)
     runner.run()
