@@ -208,18 +208,26 @@ class TrGanD(nn.Module):
     x = F.sigmoid(self.output(x))
     return x
 
+def getTrganContextList(
+        batchsize, contextVREmbedding, contextWordEmbedding, conditionals,
+        noImg=False):
+    annotations = pairnn.getContextVectors(
+            contextVREmbedding, contextWordEmbedding, conditionals[:,:12], batchsize)
+    role = contextVREmbedding(conditionals[:,12].long()).view(batchsize, -1)
+    n1 = contextWordEmbedding(conditionals[:,13].long()).view(batchsize, -1)
+    n2 = contextWordEmbedding(conditionals[:,14].long()).view(batchsize, -1)
+    toCat = annotations + [role, n1, n2]
+    if not noImg:
+        toCat.append(conditionals[:,15:15 + pc.IMFEATS])
+    return toCat
+
 def getTrganContext(
-    batchsize, contextVREmbedding, contextWordEmbedding, conditionals, noImg=False):
-  annotations = pairnn.getContextVectors(
-      contextVREmbedding, contextWordEmbedding, conditionals[:,:12], batchsize)
-  role = contextVREmbedding(conditionals[:,12].long()).view(batchsize, -1)
-  n1 = contextWordEmbedding(conditionals[:,13].long()).view(batchsize, -1)
-  n2 = contextWordEmbedding(conditionals[:,14].long()).view(batchsize, -1)
-  toCat = annotations + [role, n1, n2]
-  if not noImg:
-    toCat.append(conditionals[:,15:15 + pc.IMFEATS])
-  context = torch.cat(toCat, 1)
-  return context
+        batchsize, contextVREmbedding, contextWordEmbedding, conditionals,
+        noImg=False):
+    toCat = getTrganContextList(
+            batchsize, contextVREmbedding, contextWordEmbedding, conditionals,
+            noImg)
+    return torch.cat(toCat, 1)
 
 class TrGanG(nn.Module):
   def __init__(
@@ -235,6 +243,11 @@ class TrGanG(nn.Module):
         [nn.Linear(hiddenSize, hiddenSize) for i in range(depth)])
     self.output = nn.Linear(hiddenSize, outputSize)
     self.dropout = dropout
+
+    self.imgnorm = nn.BatchNorm1d(pc.IMFEATS)
+
+    self.hidden_norms = nn.ModuleList(
+        [nn.BatchNorm1d(hiddenSize) for i in range(depth)])
 
     self.contextWordEmbedding = nn.Embedding(nWords+1, wESize)
     self.contextVREmbedding = nn.Embedding(nVRs+1, vrESize)
@@ -262,9 +275,13 @@ class TrGanG(nn.Module):
         "invalid len(z)=%d, len(conditionals)=%d" % (len(z), len(conditionals))
 
     batchsize = len(z)
-    context = getTrganContext(
+    context_list = getTrganContextList(
         batchsize, self.contextVREmbedding, self.contextWordEmbedding, 
         conditionals)
+    # last element of context_list is image features. pass through normalization
+    new_features = self.imgnorm(context_list[-1])
+    context_list[-1] = new_features
+    context = torch.cat(context_list, 1)
 
     if ignoreCond:
       context = context.clone()
@@ -286,8 +303,11 @@ class TrGanG(nn.Module):
       if i > 0 and i % 2 == 0: 
         x = x + x_prev
         x_prev = x
+      # Add batch normalization.
+      if i % 2 == 0:
+        x = self.hidden_norms[i](x)
     x = self.output(x)
-    return x
+    return F.tanh(x)
 
 def trainCGANTest(datasetFileName = "data/models/nngandataTrain_test", ganFileName = "data/models/ganModel_test"):
   trainCGAN(ganFileName, datasetFileName)
@@ -860,8 +880,10 @@ class CheckpointTrainer(object):
             torch.save((netD, netG), os.path.join(saveDir, checkpointName))
         
 class UpdateStepper(object):
-    REAL_LABEL = 1
-    FAKE_LABEL = 0
+    REAL_LABEL_MAX = 1.2
+    REAL_LABEL_MIN = 0.7
+    FAKE_LABEL_MAX = 0.3
+    FAKE_LABEL_MIN = 0
     def __init__(self, pairDataManager, netD, netG, **kwargs):
         self._kwargs = kwargs
         self._pdm = pairDataManager
@@ -871,7 +893,7 @@ class UpdateStepper(object):
         self._noise = ag.Variable(torch.FloatTensor(self._kwargs["batchSize"], self._kwargs["nz"]).cuda(self._kwargs["gpu_id"]))
         self._optimizerD = optim.SGD(
                 self.netD.parameters(), lr=self._kwargs["lr"])
-        self._optimizerG = optim.SGD(
+        self._optimizerG = optim.Adam(
                 self.netG.parameters(), lr=self._kwargs["lr"])
 
         self._l1Criterion = nn.L1Loss().cuda(self._kwargs["gpu_id"])
@@ -881,6 +903,9 @@ class UpdateStepper(object):
             self.computeDCriterionOnReal = self.logDCriterionOnReal
             self.computeDCriterionOnFake = self.logDCriterionOnFake
             self.computeGCriterion = self.logGCriterion
+            assert(not self._kwargs["noisy_labels"]), "Noisy labels not " \
+                    "supported for losstype=='log'"
+                
         elif losstype == "square":
             self.computeDCriterionOnReal = self.sqDCriterionOnReal
             self.computeDCriterionOnFake = self.sqDCriterionOnFake
@@ -904,18 +929,33 @@ class UpdateStepper(object):
         if self._kwargs["useScore"]:
             sys.exit(1) # TODO not supported right now.
         return ret
+    def getRealLabels(self, size):
+        labels = torch.zeros(size).cuda(self._kwargs["gpu_id"])
+        labels.uniform_(self.REAL_LABEL_MIN, self.REAL_LABEL_MAX)
+        return ag.Variable(labels)
+    def getFakeLabels(self, size):
+        labels = torch.zeros(size).cuda(self._kwargs["gpu_id"])
+        labels.uniform_(self.FAKE_LABEL_MIN, self.FAKE_LABEL_MAX)
+        return ag.Variable(labels)
     def sqDCriterionOnReal(self, discOnReal, score):
-        ret = torch.mean(torch.pow(discOnReal - 1., 2))
+        ret = torch.mean(
+                torch.pow(discOnReal - self.getRealLabels(discOnReal.size()),
+                2))
+
         if self._kwargs["useScore"]:
             sys.exit(1) # TODO not supported right now.
         return ret
     def sqDCriterionOnFake(self, discOnFake, score):
-        ret = torch.mean(torch.pow(discOnFake, 2))
+        ret = torch.mean(
+                torch.pow(discOnFake - self.getFakeLabels(discOnFake.size()),
+                2))
         if self._kwargs["useScore"]:
             sys.exit(1) # TODO not supported right now.
         return ret
     def sqGCriterion(self, discOnFake, score):
-        ret = torch.mean(torch.pow(discOnFake - 1., 2))
+        ret = torch.mean(
+                torch.pow(discOnFake - self.getRealLabels(discOnFake.size()),
+                2))
         if self._kwargs["useScore"]:
             sys.exit(1) # TODO not supported right now.
         return ret

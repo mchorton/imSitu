@@ -166,6 +166,7 @@ class MultiganParameters(object):
                 "nn_sampled_pts": 20,
                 "nn_considered": int(1e9),
                 "activeGpus": [0, 1, 2, 3],
+                "noisy_labels": True,
                 "style": "trgan"}
 
 class MultiganTrainer(object):
@@ -411,34 +412,36 @@ def smalltest(cautious=True, seqOverride=False):
     runner.generatePhpDirectory(PhpGenerator(dirconfig))
 
 def holdout(cautious=True, **kwargs):
-    dirconfig = DirConfig("data/holdout/", cautious)
+    dirconfig = DirConfig("data/holdout2/", cautious)
     dirconfig.featdir = "data/regression_filtered_fc7/"
 
     mp = MultiganParameters(dirconfig)
     mp.kwargs["lr"] = 1e-4
-    mp.kwargs["decayPer"] = 1e10
-    mp.kwargs["decayRate"] = 1.
-    mp.kwargs["epochs"] = 1500
-    mp.kwargs["updateAblationPer"] = 50
-    mp.kwargs["updateParzenPer"] = 50
+    mp.kwargs["decayPer"] = 1000
+    mp.kwargs["decayRate"] = 0.8
+    mp.kwargs["epochs"] = 15000
+    mp.kwargs["updateAblationPer"] = 500
+    mp.kwargs["updateParzenPer"] = 500
     mp.kwargs["nSamples"] = 50
     mp.kwargs["nTestSamples"] = 10
     mp.kwargs["procsPerGpu"] = 1
-    mp.kwargs["depth"] = 2
-    mp.kwargs["genDepth"] = 2
+    mp.kwargs["depth"] = 1
+    mp.kwargs["genDepth"] = 16
     mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
     mp.kwargs["logPer"] = 5
     mp.kwargs["dUpdates"] = 1
-    mp.kwargs["logDevPer"] = 10
+    mp.kwargs["logDevPer"] = 100
     mp.kwargs["losstype"] = "square"
     mp.kwargs["seqOverride"] = False
     mp.kwargs["lam"] = 5e-2
-    mp.kwargs["trgandnoImg"] = True
-    mp.kwargs["minDataPts"] = 50
+    mp.kwargs["trgandnoImg"] = False
+    mp.kwargs["minDataPts"] = 0
     mp.kwargs["graphPerIter"] = 500
     mp.kwargs["measurePerf"] = False
+    mp.kwargs["trgandnoImg"] = True
     mp.kwargs["skip_generate_dists"] = True
+    mp.kwargs["gdropout"] = 0.5
     mp.kwargs["held_out_pairs"] = {
             ("n04256520", "n02818832"): 0.5, # sofa -> bed
             ("n02374451", "n02402425"): 0.5, # horse -> cattle
