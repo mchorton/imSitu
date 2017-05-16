@@ -4,6 +4,7 @@ import utils.mylogger as logging
 import json
 import utils.methods as mt
 def splitTrainDevTestMinInTrain(outDir, test=False):
+  assert(False), "You probably don't want to run this..."
   # Note: this random seed is NOT the seed used to generate the data we used!
   # it was fixed after (data was originally generated without a seed)
   # set random seed

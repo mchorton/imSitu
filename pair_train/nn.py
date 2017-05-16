@@ -483,8 +483,6 @@ def makeDataSet(
   imToFeatures = dataman.getIm2Feats(featureDirectory, im1Names)
 
   # Loop through, building train and dev sets.
-  xData = []
-  yData = []
   wasted = 0
   def l2(v1,v2):
     rv = 0
@@ -525,25 +523,32 @@ def makeDataSet(
         vrnData.append(best)
   getUniqueVrnNounpairs(vrnData)
 
+  return get_dataset(vrnData, role2Int, noun2Int, imToFeatures)
+
+def get_dataset_pdm(vrn_data, pdm):
+    return get_dataset(vrn_data, pdm.role2int, pdm.noun2int, pdm.name2feat)
+
+def get_dataset(vrn_data, role2int, noun2int, im_2_features):
+  xData = []
+  yData = []
   for i, (score, im1Name, im2Name, tRole, noun1, noun2, an1, an2) in tqdm.tqdm(
-        enumerate(vrnData), total=len(vrnData)):
-    assert(im1Name in whitelistedImgNames)
+        enumerate(vrn_data), total=len(vrn_data)):
     anitems = [] 
     for (k,v) in an1.items():
-      rid = role2Int[make_tuple(k)]
-      nid = noun2Int[v]
+      rid = role2int[make_tuple(k)]
+      nid = noun2int[v]
       anitems.append((rid,nid))
     while len(anitems) < 6:
-      anitems.append((len(role2Int), len(noun2Int)))
+      anitems.append((len(role2int), len(noun2int)))
    
     anitems = sorted(anitems, key = lambda x : x[0]) 
     indexes = []
     for (k,v) in anitems: indexes += [k,v]
  
     x = list(indexes) \
-        + [role2Int[tuple(tRole)], noun2Int[noun1], noun2Int[noun2]] \
-        + list(imToFeatures[im1Name]) 
-    y = list(imToFeatures[im2Name]) + [score]
+        + [role2int[tuple(tRole)], noun2int[noun1], noun2int[noun2]] \
+        + list(im_2_features[im1Name]) 
+    y = list(im_2_features[im2Name]) + [score]
 
     xData.append(x)
     yData.append(y)
@@ -696,6 +701,31 @@ def computeAllFeatures(model, dataSet, gpu_id):
     ret = torch.cat([ret, outputs.data.cpu()])
   return ret
 
+def computeAllFeaturesGan(model, dataSet, **kwargs):
+    """
+    model: a subclass of nn.Module, used to compute features
+    dataSet: a torch.DataSet with the inputs and expected outputs.
+    Since this function only really needs the inputs, the expected outputs can
+    be anything (this function could also take a torch.Tensor in principle,
+    but the way other the code is written, this input is convenient.
+  
+    returns a torch.Tensor() containing the features of the input
+    """
+    trainloader = td.DataLoader(
+            dataSet, batch_size=kwargs["batchSize"], shuffle=False,
+            num_workers=0)
+    ret = torch.Tensor()
+    noise = torch.zeros(kwargs["batchSize"], kwargs["nz"])
+    for i, data in enumerate(trainloader, 0):
+        inputs, _ = data
+        this_batch_len = inputs.size(0)
+        inputs = ag.Variable(inputs.cuda(kwargs["gpu_id"]))
+        noise.normal_(0, 1)
+        outputs = model(
+                noise[:this_batch_len], inputs, train=True,
+                ignoreCond=kwargs.get("ignoreCond", False))
+        ret = torch.cat([ret, outputs.data.cpu()])
+    return ret
 #if __name__ == '__main__':
 #  makeAllData()
 # Training the image transformation logic using a neural network.

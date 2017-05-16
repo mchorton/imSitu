@@ -153,10 +153,11 @@ def checkDatasetStyle(xdata, ydata):
 class TrGanD(nn.Module):
   def __init__(
       self, inputSize, outputSize, hiddenSize, depth, nWords, wESize, nVRs,
-      vrESize, noImg):
+      vrESize, noImg, trnodctx):
     super(TrGanD, self).__init__()
-    self.ydataLength = (6 * wESize + 6 * vrESize) \
-                       + (vrESize) + (2 * wESize)
+    self.ydataLength = 0
+    if not trnodctx:
+      self.ydataLength += (6 * wESize + 6 * vrESize) + (vrESize) + (2 * wESize)
     if not noImg:
       self.ydataLength += pc.IMFEATS
     self.input_layer = nn.Linear(inputSize + self.ydataLength, hiddenSize)
@@ -173,6 +174,7 @@ class TrGanD(nn.Module):
     logging.getLogger(__name__).info("Building Discriminator network")
     logging.getLogger(__name__).info(
         "--> Input size: %d" % (inputSize + self.ydataLength))
+    self._trnodctx = trnodctx
   def forward(self, conditionals, testImage, train=False):
     """
     Determine whether the input testImage is real or fake, given the information
@@ -190,10 +192,12 @@ class TrGanD(nn.Module):
     testImage = testImage[:,:pc.IMFEATS] # get rid of the scores.
 
     batchSize = testImage.size(0)
-    context = getTrganContext(
-        batchSize, self.contextVREmbedding, self.contextWordEmbedding,
-        conditionals, self.noImg)
-    netInput = torch.cat([testImage, context], 1)
+    toCat = [testImage]
+    if not self._trnodctx:
+        toCat += getTrganContextList(
+                batchSize, self.contextVREmbedding, self.contextWordEmbedding,
+                conditionals, self.noImg)
+    netInput = torch.cat(toCat, 1)
 
     x = F.dropout(
         F.leaky_relu(
@@ -809,7 +813,8 @@ class CheckpointTrainer(object):
             netD = TrGanD(
                     pc.IMFEATS, 1, self._kwargs["hiddenSize"],
                     self._kwargs["depth"], self._nWords, self._wESize,
-                    self._nVRs, self._vrESize, self._kwargs["trgandnoImg"]) \
+                    self._nVRs, self._vrESize, self._kwargs["trgandnoImg"],
+                    self._kwargs["trnodctx"]) \
                         .cuda(self._kwargs["gpu_id"])
         else:
             raise ValueError("Invalid style '%s'" % style)

@@ -1,7 +1,13 @@
+import os
+from os.path import join
+from collections import defaultdict
+import json
+
+import numpy as np
+
 import pair_train.gan as gan
 import pair_train.nn as pairnn
 import utils.methods as mt
-import os
 import split.splitters as spsp
 import split.rp_experiments as rpe
 import split.splitters as spsp
@@ -10,6 +16,8 @@ import utils.mylogger as logging
 import split.v2pos.htmlgen as html
 import itertools as it
 import data as dataman
+import generate_samples as gs
+import torch
 
 # This should probably be multiple objects?
 # TODO why am I not using zsDev.json anywhere?
@@ -32,12 +40,17 @@ class DirConfig(object):
         self.vrndir = self._rebase("data/vrndata/")
         self.multigandir = self._rebase("multigan/")
         self.multiganlogdir = self._rebase("multiganlogdir/")
+        self.chimdir = self._rebase("chimeras/")
 
         self.trainSetName = os.path.join(self.localsplitdir, "zsTrain.json")
         self.vrnDataName = os.path.join(self.vrndir, "vrnData.json")
+        self.heldoutVrnDataName = os.path.join(
+                self.vrndir, "_heldout_vrnData.json")
         # TODO these should be automatic
         self.pairDataTrain = os.path.join(self.pairdir, "pairtrain.pyt")
         self.pairDataDev = os.path.join(self.pairdir, "pairdev.pyt")
+        self.chimName = join(self.chimdir, "chimeras")
+
     def _rebase(self, directory):
         return os.path.join(self.basedir, directory)
 
@@ -425,7 +438,7 @@ def holdout(cautious=True, **kwargs):
     mp.kwargs["nSamples"] = 50
     mp.kwargs["nTestSamples"] = 10
     mp.kwargs["procsPerGpu"] = 1
-    mp.kwargs["depth"] = 1
+    mp.kwargs["depth"] = 16
     mp.kwargs["genDepth"] = 16
     mp.kwargs["skipShardAndSave"] = False
     mp.kwargs["batchSize"] = 128
@@ -437,11 +450,12 @@ def holdout(cautious=True, **kwargs):
     mp.kwargs["lam"] = 5e-2
     mp.kwargs["trgandnoImg"] = False
     mp.kwargs["minDataPts"] = 0
-    mp.kwargs["graphPerIter"] = 500
+    mp.kwargs["graphPerIter"] = 300
     mp.kwargs["measurePerf"] = False
     mp.kwargs["trgandnoImg"] = True
     mp.kwargs["skip_generate_dists"] = True
     mp.kwargs["gdropout"] = 0.5
+    mp.kwargs["trnodctx"] = True
     mp.kwargs["held_out_pairs"] = {
             ("n04256520", "n02818832"): 0.5, # sofa -> bed
             ("n02374451", "n02402425"): 0.5, # horse -> cattle
@@ -455,15 +469,120 @@ def holdout(cautious=True, **kwargs):
             ("n08613733", "n08438533"): 0.5, # outdoors -> forest
         }
     mp.kwargs["train_only"] = [
-            ("n01503061", "n01605630"), # bird -> hawk # 161 ;
-            ("n03948459", "n04090263"), # pistol -> rifle # 92
-            ("n11669921", "n13104059"), # flower -> tree # 221
-            ("n08613733", "n08438533"), # outdoors -> forest # 111
+            ("n04256520", "n02818832"), # sofa -> bed
+            ("n02374451", "n02402425"), # horse -> cattle
+            ("n02084071", "n02121620"), # dog -> cat
+            ("n02958343", "n04490091"), # car -> truck
+            ("n02958343", "n02930766"), # car -> cab
+            ("n01503061", "n01605630"), # bird -> hawk
+            ("n03948459", "n04090263"), # pistol -> rifle
+            ("n07747607", "n07749582"), # orange -> lemon
+            ("n11669921", "n13104059"), # flower -> tree
+            ("n08613733", "n08438533"), # outdoors -> forest
         ]
     mp.kwargs.update(kwargs)
 
     runner = MultiganExperimentRunner(mp)
     runner.run()
+    make_save_chimeras(mp)
+
+def holdout_ctx(cautious=True, **kwargs):
+    dirconfig = DirConfig("data/holdout_withctx/", cautious)
+    dirconfig.featdir = "data/regression_filtered_fc7/"
+
+    mp = MultiganParameters(dirconfig)
+    mp.kwargs["lr"] = 1e-4
+    mp.kwargs["decayPer"] = 1000
+    mp.kwargs["decayRate"] = 0.8
+    mp.kwargs["epochs"] = 15000
+    mp.kwargs["updateAblationPer"] = 500
+    mp.kwargs["updateParzenPer"] = 500
+    mp.kwargs["nSamples"] = 50
+    mp.kwargs["nTestSamples"] = 10
+    mp.kwargs["procsPerGpu"] = 1
+    mp.kwargs["depth"] = 16
+    mp.kwargs["genDepth"] = 16
+    mp.kwargs["skipShardAndSave"] = False
+    mp.kwargs["batchSize"] = 128
+    mp.kwargs["logPer"] = 5
+    mp.kwargs["dUpdates"] = 1
+    mp.kwargs["logDevPer"] = 100
+    mp.kwargs["losstype"] = "square"
+    mp.kwargs["seqOverride"] = False
+    mp.kwargs["lam"] = 5e-2
+    mp.kwargs["trgandnoImg"] = False
+    mp.kwargs["minDataPts"] = 0
+    mp.kwargs["graphPerIter"] = 300
+    mp.kwargs["measurePerf"] = False
+    mp.kwargs["trgandnoImg"] = True
+    mp.kwargs["skip_generate_dists"] = False
+    mp.kwargs["gdropout"] = 0.5
+    mp.kwargs["trnodctx"] = False
+    mp.kwargs["held_out_pairs"] = {
+            ("n04256520", "n02818832"): 0.5, # sofa -> bed
+            ("n02374451", "n02402425"): 0.5, # horse -> cattle
+            ("n02084071", "n02121620"): 0.5, # dog -> cat
+            ("n02958343", "n04490091"): 0.5, # car -> truck
+            ("n02958343", "n02930766"): 0.5, # car -> cab
+            ("n01503061", "n01605630"): 0.5, # bird -> hawk
+            ("n03948459", "n04090263"): 0.5, # pistol -> rifle
+            ("n07747607", "n07749582"): 0.5, # orange -> lemon
+            ("n11669921", "n13104059"): 0.5, # flower -> tree
+            ("n08613733", "n08438533"): 0.5, # outdoors -> forest
+        }
+    mp.kwargs["train_only"] = [
+            ("n04256520", "n02818832"), # sofa -> bed
+            ("n02374451", "n02402425"), # horse -> cattle
+            ("n02084071", "n02121620"), # dog -> cat
+            ("n02958343", "n04490091"), # car -> truck
+            ("n02958343", "n02930766"), # car -> cab
+            ("n01503061", "n01605630"), # bird -> hawk
+            ("n03948459", "n04090263"), # pistol -> rifle
+            ("n07747607", "n07749582"), # orange -> lemon
+            ("n11669921", "n13104059"), # flower -> tree
+            ("n08613733", "n08438533"), # outdoors -> forest
+        ]
+    mp.kwargs.update(kwargs)
+
+    runner = MultiganExperimentRunner(mp)
+    runner.run()
+
+    make_save_chimeras(mp)
+
+def make_save_chimeras(params):
+    dirconfig = params.dirconfig
+    mt.makeDirIfNeeded(dirconfig.chimdir)
+    pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
+    netg_dir = join(dirconfig.multigandir, "trained_models")
+    handler = dataman.ShardedDataHandler(netg_dir, ".gan")
+
+    full_vrn_data = json.load(open(dirconfig.heldoutVrnDataName))
+    sharded_vrn_data = {}
+    for elem in full_vrn_data:
+        tup = (pdm.noun2int[elem[4]], pdm.noun2int[elem[5]])
+        if tup not in sharded_vrn_data:
+            sharded_vrn_data[tup] = []
+        sharded_vrn_data[tup].append(elem)
+
+    ads = gs.AugmentedDataSet()
+    for nounpair in handler.iterNounPairs():
+        netg_file = handler.keyToPath(nounpair)
+        _, netg = torch.load(netg_file)
+        vrn_data = sharded_vrn_data[tuple(nounpair)]
+        ads.addAds(
+                generate_gan_chimeras(netg, vrn_data, pdm, **params.kwargs))
+    ads.save(dirconfig.chimName)
+
+def generate_gan_chimeras(netg, vrn_data, pdm, **kwargs):
+    assert(isinstance(netg, gan.TrGanG)), "Invalid netg type"
+    dataset = pairnn.get_dataset(
+            vrn_data, pdm.role2int, pdm.noun2int, defaultdict(lambda:
+            np.zeros(1024), pdm.name2feat))
+    features = pairnn.computeAllFeaturesGan(netg.cuda(0), dataset, gpu_id=0, **kwargs)
+    ret = gs.AugmentedDataSet()
+    for elem in it.izip(dataset, features):
+        ret.addPoint(*elem)
+    return ret
 
 if __name__ == '__main__':
     runLowlearnNice2()

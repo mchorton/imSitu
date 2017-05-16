@@ -177,7 +177,8 @@ class PairDataManager(object):
         n1Str = nounstr(n1[0,])
         n2Str = nounstr(n2[0,])
         return " | ".join(map(str, (fullyDecodedAn, roleStr, n1Str, n2Str)))
-
+    def get_cond_from_td(self, tensor_dataset):
+        return torch.cat(zip(*tensor_dataset)[1])
     # TODO what to do about values that are too big?
     def annotationsintsToCodes(self, annotations):
         assert(annotations.size() == torch.Size((1, 12))), "Invalid annotations"
@@ -197,20 +198,21 @@ def getIm2Feats(featureDirectory, imNames):
   return imToFeatures
 
 def getGANChimeras(netG, nTestPoints, yval, dropoutOn=True, **kwargs):
+  """
+  @param yval - a 1xD torch.Tensor with the conditional values to be generated.
+  """
   gpu_id = kwargs["gpu_id"]
-  batchSize = kwargs["batchSize"]
+  yval = yval.expand(nTestPoints, yval.size(1)).cuda(gpu_id)
+  return getGANChimerasForYvals(netG, yval, dropoutOn, **kwargs)[:nTestPoints]
+
+def getGANChimerasForYvals(netG, yvals, dropoutOn=True, **kwargs):
+  gpu_id = kwargs["gpu_id"]
   out = []
   nz = netG.inputSize
   noise = ag.Variable(
-      torch.FloatTensor(batchSize, nz), requires_grad=False).cuda(gpu_id)
-  yvar = ag.Variable(yval.expand(batchSize, yval.size(1))).cuda(gpu_id)
-  for i in range(nTestPoints):
-    noise.data.normal_(0, 1)
-    if i * batchSize > nTestPoints:
-      break
-    out = torch.cat(out + [netG(noise, yvar, dropoutOn, ignoreCond=False)], 0)
-    out = [out]
-  return out[0][:nTestPoints]
+      torch.FloatTensor(yvals.size(0), nz), requires_grad=False).cuda(gpu_id)
+  yvar = ag.Variable(yvals).cuda(gpu_id)
+  return netG(noise, yvar, dropoutOn, ignoreCond=False)
 
 class CondSharder(object):
     """

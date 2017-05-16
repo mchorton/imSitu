@@ -201,11 +201,13 @@ def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, bl
         
   myobj = []
   myDecodedObj = []
+  myHeldout = []
   myDecodedHeldout = []
   for stuff in toShow:
     pair = (stuff[0], stuff[1])
     if stuff[3] in heldback_images or stuff[4] in heldback_images:
       # don't append this to the objects.
+      myHeldout.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), stuff[0], stuff[1], stringifyKeys(examiner.getCanonicalLabels(stuff[3])), stringifyKeys(examiner.getCanonicalLabels(stuff[4]))])
       myDecodedHeldout.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), du.decodeNoun(stuff[0]), du.decodeNoun(stuff[1]), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[3]))), decodeVals(stringifyKeys(examiner.getCanonicalLabels(stuff[4])))])
       continue
     myobj.append([stuff[2], stuff[3], stuff[4], list(stuff[5]), stuff[0], stuff[1], stringifyKeys(examiner.getCanonicalLabels(stuff[3])), stringifyKeys(examiner.getCanonicalLabels(stuff[4]))])
@@ -213,10 +215,12 @@ def getVrnDataActual(distdir, datasetName, outDir, thresh=2, freqthresh = 10, bl
 
   outLoc = os.path.join(outDir, "vrnData.json")
   decodedLoc = os.path.join(outDir, "_decoded_vrnData.json")
+  heldoutLoc = os.path.join(outDir, "_heldout_vrnData.json")
   decodedHeldoutLoc = os.path.join(outDir, "_decoded_heldout_vrnData.json")
   logging.getLogger(__name__).info("Writing vrndata to %s" % outLoc)
   json.dump(myobj, open(outLoc, "w+"))
   json.dump(myDecodedObj, open(decodedLoc, "w+"))
+  json.dump(myHeldout, open(heldoutLoc, "w+"))
   json.dump(myDecodedHeldout, open(decodedHeldoutLoc, "w+"))
 
   json.dump(list(heldback_images), open(os.path.join(outDir, "heldback.json"), "w+"))
