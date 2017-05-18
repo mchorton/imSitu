@@ -1,3 +1,4 @@
+import json
 import torch.autograd as ag
 import utils.mylogger as logging
 import os
@@ -130,6 +131,11 @@ class PairDataManager(object):
         self._verb2intFile = "%s_verb2Int" % self.trainLoc
         self._featDir = featDir
 
+        self.train_img_names = set(json.load(
+                open("_".join([self.trainLoc, "trainImgNames.json"]))))
+        self.dev_img_names = set(json.load(
+                open("_".join([self.devLoc, "devImgNames.json"]))))
+
         self.role2int = torch.load(self._role2intFile)
         self.noun2int = torch.load(self._noun2intFile)
         self.verb2int = torch.load(self._verb2intFile)
@@ -213,6 +219,22 @@ def getGANChimerasForYvals(netG, yvals, dropoutOn=True, **kwargs):
       torch.FloatTensor(yvals.size(0), nz), requires_grad=False).cuda(gpu_id)
   yvar = ag.Variable(yvals).cuda(gpu_id)
   return netG(noise, yvar, dropoutOn, ignoreCond=False)
+
+def cond_by_helper(pdm, full_conditional):
+    # Only want to condition by target semantics
+    an, role, n1, n2, im_and_score = pdm.decodeCond(full_conditional)
+    target_an = an.clone()
+    # Replace the role-n1 pair with role-n2
+    role = role[(0,)]
+    n1 = n1[(0,)]
+    n2 = n2[(0,)]
+    for i in range(0, target_an.size(1), 2):
+        if target_an[(0, i)] == role and target_an[(0, i + 1)] == n1:
+            target_an[(0, i + 1)] = n2
+        return target_an
+    raise ValueError(
+            "Invalid conditional: an=%s, role=%s, n1=%s, n2=%s, "
+            "im_and_score=%s" % (an, role, n1, n2, im_and_score))
 
 class CondSharder(object):
     """

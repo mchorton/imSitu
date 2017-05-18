@@ -1,10 +1,18 @@
 # Code to generate chimera augmentations using a trained network.
-import torch
-import nn as pairnn
+from os.path import join
 import json
 import itertools as it
 import cPickle
 import logging
+from collections import defaultdict
+import numpy as np
+
+import torch
+
+import utils.methods as mt
+import nn as pairnn
+import data as dataman
+import gan
 
 _formatstr = '%(asctime)s %(name)s %(levelname)s]: %(message)s'
 
@@ -130,5 +138,42 @@ def generateDepsAndChimeras():
   logger.debug("pairFileName=%s" % pairFileName)
   write_augmented_chimeras("%s_chimeras" % modelFileName, modelFileName, pairFileName, sourceWhitelistName, featDir)
 
-#if __name__ == '__main__':
-#  generateDepsAndChimeras()
+def make_save_chimeras(params):
+    """
+    @param params - a MultiganParameters object
+    """
+    dirconfig = params.dirconfig
+    mt.makeDirIfNeeded(dirconfig.chimdir)
+    pdm = dataman.PairDataManager(dirconfig.pairdir, dirconfig.featdir)
+    netg_dir = join(dirconfig.multigandir, "trained_models")
+    handler = dataman.ShardedDataHandler(netg_dir, ".gan")
+
+    full_vrn_data = json.load(open(dirconfig.heldoutVrnDataName))
+    sharded_vrn_data = {}
+    for elem in full_vrn_data:
+        tup = (pdm.noun2int[elem[4]], pdm.noun2int[elem[5]])
+        if tup not in sharded_vrn_data:
+            sharded_vrn_data[tup] = []
+        # Only accept images for which we didn't train on the source image.
+        if elem[1] in pdm.dev_img_names:
+            sharded_vrn_data[tup].append(elem)
+
+    ads = AugmentedDataSet()
+    for nounpair in handler.iterNounPairs():
+        netg_file = handler.keyToPath(nounpair)
+        _, netg = torch.load(netg_file)
+        vrn_data = sharded_vrn_data[tuple(nounpair)]
+        ads.addAds(
+                generate_gan_chimeras(netg, vrn_data, pdm, **params.kwargs))
+    ads.save(dirconfig.chim_base_name)
+
+def generate_gan_chimeras(netg, vrn_data, pdm, **kwargs):
+    assert(isinstance(netg, gan.TrGanG)), "Invalid netg type"
+    dataset = pairnn.get_dataset(
+            vrn_data, pdm.role2int, pdm.noun2int, defaultdict(lambda:
+            np.zeros(1024), pdm.name2feat))
+    features = pairnn.computeAllFeaturesGan(netg.cuda(0), dataset, gpu_id=0, **kwargs)
+    ret = AugmentedDataSet()
+    for elem in it.izip(dataset, features):
+        ret.addPoint(*elem)
+    return ret

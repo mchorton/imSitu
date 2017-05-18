@@ -1,11 +1,14 @@
 import collections
+import functools as ft
 import random as rd
 import numpy as np
+
 import torch
 import torch.utils.data as td
 import torch.autograd as ag
-import data as dataman
+
 import utils.mylogger as logging
+import data as dataman
 # Evaluate the rank of generated images and their nearest neighbors.
 """
 1. Find semantics of a dev set point.
@@ -23,23 +26,8 @@ def l2(im1, im2):
 
 def evalRank(netg, dev_dataset, pdm, **kwargs):
     logging.getLogger(__name__).info("Evaluating rank")
-    def cond_by(full_conditional):
-        # Only want to condition by target semantics
-        an, role, n1, n2, im_and_score = pdm.decodeCond(full_conditional)
-        target_an = an.clone()
-        # Replace the role-n1 pair with role-n2
-        role = role[(0,)]
-        n1 = n1[(0,)]
-        n2 = n2[(0,)]
-        for i in range(0, target_an.size(1), 2):
-            if target_an[(0, i)] == role and target_an[(0, i + 1)] == n1:
-                target_an[(0, i + 1)] = n2
-            return target_an
-        raise ValueError(
-                "Invalid conditional: an=%s, role=%s, n1=%s, n2=%s, "
-                "im_and_score=%s" % (an, role, n1, n2, im_and_score))
     sharder = dataman.CondSharder(kwargs["style"])
-    shards = sharder.shard(cond_by, dev_dataset)
+    shards = sharder.shard(ft.partial(dataman.cond_by_helper, pdm), dev_dataset)
     # algorithm:
     # 1. randomly choose a point. generate images. (just make list with shuffled
     # index pointers, or sth)
