@@ -433,4 +433,10 @@ def get_im2vr2nouns(dataset):
     ret[imgname] = vr2nouns
   return ret
 
-
+def get_converted_annotation(img, oracle):
+    ann = oracle[img]
+    result = copy.deepcopy(ann)
+    for i, elem in enumerate(ann["frames"]):
+        for k,v in elem.iteritems():
+            result["frames"][i][k] = decodeNoun(v)
+    return result

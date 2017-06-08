@@ -1,8 +1,12 @@
+import requests
 import operator as op
 import itertools
 import os
 import cPickle
 import random
+from PIL import Image
+from io import BytesIO
+from os.path import join
 
 class HtmlTable():
   def __init__(self):
@@ -54,6 +58,12 @@ def getImgUrl(name):
 
 def getUrl(name):
   return 'https://s3.amazonaws.com/my89-frame-annotation/public/images_256/%s' % (name)
+
+def save_img(name, dirname):
+    url = getUrl(name)
+    r = requests.get(url)
+    i = Image.open(BytesIO(r.content))
+    i.save(join(dirname, name), "JPEG")
 
 def getImgUrls(names):
   ret = set()
